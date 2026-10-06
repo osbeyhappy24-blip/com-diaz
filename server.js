@@ -19,11 +19,35 @@ const BRAND = `
 
 const app = Fastify({ logger: true });
 
+// Tolerar body vacío cuando Content-Type es JSON
+app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+  if (!body || body.length === 0) return done(null, {});
+  try { done(null, JSON.parse(body)); }
+  catch (e) { done(e); }
+});
+
+
+
+// ---- Auth por API Key ----
+app.addHook('onRequest', async (req, reply) => {
+  // Solo exige auth en /api/* (deja pasar el root y OPTIONS)
+  if (!req.url.startsWith('/api/')) return;
+  if (req.method === 'OPTIONS') return;
+  // EXCEPCIÓN: /api/auth no requiere clave (es la que la valida)
+  if (req.url.startsWith('/api/auth')) return;
+  const expected = state.pin;
+  if (!expected) return;
+  const got = req.headers['x-comdiaz-key'];
+  if (got !== expected) {
+    reply.code(401).send({ ok: false, error: 'No autorizado' });
+  }
+});
+
 // ---- CORS ----
 app.addHook('onRequest', async (req, reply) => {
   reply.header('Access-Control-Allow-Origin', '*');
   reply.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  reply.header('Access-Control-Allow-Headers', 'Content-Type');
+  reply.header('Access-Control-Allow-Headers', 'Content-Type, X-Comdiaz-Key');
 });
 app.options('*', async (req, reply) => reply.code(204).send());
 
@@ -89,6 +113,7 @@ const DEFAULTS = {
     nextRuns: [],
   },
   margin: 35,
+  pin: '1234',
   categories: DEFAULT_CATEGORIES,
   results: [],
   sources: JSON.parse(JSON.stringify(DEFAULT_SOURCE_STATE)),
@@ -113,23 +138,64 @@ const adapters = {
 
 function buildShareText(opts = {}) {
   const D = String.fromCharCode(36);
-  const maxTotal = Number(opts.limit) || 30;
-  const perCat = Number(opts.perCategory) || 5;
+  const mode = String(opts.mode || "custom").toLowerCase();
+  const totalProducts = state.results.length;
+
+  // Determinar cuántos y cuáles productos incluir según el modo
+  let maxTotal, perCat, fromIdx = 0;
+
+  if (mode === "completo") {
+    maxTotal = Number(opts.limit) || 200;
+    perCat = 30;
+  } else if (mode === "mitad") {
+    maxTotal = Math.ceil(totalProducts / 2);
+    perCat = Math.max(3, Math.ceil(maxTotal / 8));
+  } else if (mode === "tercios") {
+    // Cada tercio es la mitad del tamaño de un tercio del total, para que
+    // los 3 posts juntos cubran casi todo (con solapamiento leve)
+    const tercio = Math.ceil(totalProducts / 3);
+    maxTotal = tercio;
+    perCat = Math.max(2, Math.ceil(tercio / 8));
+    // Índice de inicio según qué parte: parte=1,2,3
+    const parte = Number(opts.part) || 1;
+    fromIdx = (parte - 1) * tercio;
+  } else if (mode === "rotativo") {
+    // Rota según la hora actual: 09h -> parte 1, 15h -> parte 2, 21h -> parte 3
+    const h = new Date().getHours();
+    const parte = h < 12 ? 1 : h < 18 ? 2 : 3;
+    const tercio = Math.ceil(totalProducts / 3);
+    maxTotal = tercio;
+    perCat = Math.max(2, Math.ceil(tercio / 8));
+    fromIdx = (parte - 1) * tercio;
+    opts.part = parte;
+  } else {
+    maxTotal = Number(opts.limit) || 30;
+    perCat = Number(opts.perCategory) || 5;
+  }
+
+  // Filtrar categorías
   const onlyCats = Array.isArray(opts.categories) && opts.categories.length
     ? opts.categories
     : [...new Set(state.results.map(r => r.category))];
 
+  // Rebanar los resultados globalmente
+  const slice = state.results.slice(fromIdx, fromIdx + maxTotal);
+
+  // Agrupar por categoría
   const grouped = {};
-  for (const r of state.results) {
+  for (const r of slice) {
     if (!onlyCats.includes(r.category)) continue;
     grouped[r.category] = grouped[r.category] || [];
     if (grouped[r.category].length < perCat) grouped[r.category].push(r);
   }
 
+  // Encabezado dinámico
+  const parteLabel = opts.part ? " (Parte " + opts.part + "/3)" : "";
   const out = [];
-  out.push('\uD83D\uDECD *Comdiaz - Ofertas disponibles*');
+  out.push('\uD83D\uDECD *Comdiaz - Ofertas disponibles' + parteLabel + '*');
   out.push('_Precios actualizados - Envios a todo el pais_');
   out.push('');
+
   let count = 0;
   for (const cat of onlyCats) {
     const items = grouped[cat] || [];
@@ -147,23 +213,38 @@ function buildShareText(opts = {}) {
       count++;
     }
   }
+
   out.push('--------------------------');
   out.push('Pedidos por WhatsApp');
   out.push('Responde este mensaje con el nombre del producto');
-  return { text: out.join('\n'), count };
+
+  return {
+    text: out.join('\n'),
+    count,
+    mode,
+    part: opts.part || null,
+    total: totalProducts,
+    fromIdx,
+  };
 }
 
 function guardarResumenAutomatico(trigger) {
   try {
     if (typeof buildShareText !== "function") {
-      app.log.warn('buildShareText no disponible, salto resumen');
+      app.log.warn('buildShareText no disponible');
       return;
     }
-    const r = buildShareText({ limit: 30, perCategory: 5 });
+    // En cron usamos "rotativo" (cada slot muestra una parte).
+    // En manual usamos "custom" con límites chicos para no spamear.
+    const mode = (trigger === "cron") ? "rotativo" : "custom";
+    const r = buildShareText({ mode, limit: 30, perCategory: 5 });
+
     state.summaries = state.summaries || [];
     state.summaries.unshift({
       id: Date.now(),
       trigger,
+      mode: r.mode,
+      part: r.part,
       createdAt: new Date().toISOString(),
       count: r.count,
       products: state.results.length,
@@ -172,7 +253,7 @@ function guardarResumenAutomatico(trigger) {
       text: r.text,
     });
     if (state.summaries.length > 20) state.summaries.length = 20;
-    app.log.info('Resumen automatico guardado (' + r.count + ' productos)');
+    app.log.info('Resumen guardado (' + r.count + ' productos, modo ' + r.mode + ')');
   } catch (e) {
     app.log.error('Error guardando resumen: ' + e.message);
   }
@@ -280,13 +361,17 @@ app.get('/api/state', async () => state);
 
 app.post('/api/automation/play', async () => {
   const delay = state.automation.delaySeconds;
-  app.log.info(`Comdiaz · arranca en ${delay}s`);
+  // Activa el estado INMEDIATAMENTE
+  state.automation.running = true;
+  await save();
+  app.log.info('Comdiaz · play activado, primera búsqueda en ' + delay + 's');
+  // Solo la primera búsqueda se retrasa
   setTimeout(() => {
-    state.automation.running = true;
-    save();
-    runSearch('arranque');
+    if (state.automation.running) {
+      runSearch('arranque');
+    }
   }, delay * 1000);
-  return { ok: true, message: `Arranca en ${delay}s`, delay };
+  return { ok: true, delay, running: true };
 });
 
 app.post('/api/automation/pause', async () => {
@@ -347,47 +432,7 @@ app.post('/api/search/now', async () => {
 const D = String.fromCharCode(36); // $
 
 app.post('/api/share', async (req) => {
-  const maxTotal = Number(req.body?.limit) || 30;
-  const perCat = Number(req.body?.perCategory) || 5;
-  const onlyCats = Array.isArray(req.body?.categories) && req.body.categories.length
-    ? req.body.categories
-    : [...new Set(state.results.map(r => r.category))];
-
-  const grouped = {};
-  for (const r of state.results) {
-    if (!onlyCats.includes(r.category)) continue;
-    grouped[r.category] = grouped[r.category] || [];
-    if (grouped[r.category].length < perCat) grouped[r.category].push(r);
-  }
-
-  const out = [];
-  out.push('\uD83D\uDECD *Comdiaz - Ofertas disponibles*');
-  out.push('_Precios actualizados - Envios a todo el pais_');
-  out.push('');
-
-  let count = 0;
-  for (const cat of onlyCats) {
-    const items = grouped[cat] || [];
-    if (!items.length) continue;
-    if (count >= maxTotal) break;
-    out.push('--------------------------');
-    out.push('*' + cat.toUpperCase() + '*');
-    out.push('--------------------------');
-    for (const it of items) {
-      if (count >= maxTotal) break;
-      out.push('- ' + it.title);
-      out.push('  Precio: ' + D + it.salePrice);
-      if (it.url) out.push('  ' + it.url);
-      out.push('');
-      count++;
-    }
-  }
-
-  out.push('--------------------------');
-  out.push('Pedidos por WhatsApp');
-  out.push('Responde este mensaje con el nombre del producto');
-
-  return { ok: true, text: out.join('\n'), count };
+  return { ok: true, ...buildShareText(req.body || {}) };
 });
 
 
@@ -436,6 +481,34 @@ app.get('/api/summaries/latest', async () => ({
   ok: true,
   summary: (state.summaries || [])[0] || null,
 }));
+
+
+app.post('/api/auth', async (req, reply) => {
+  const got = String(req.body?.key || req.headers['x-comdiaz-key'] || '');
+  if (got !== state.pin) {
+    reply.code(401);
+    return { ok: false, error: 'PIN incorrecto' };
+  }
+  return { ok: true };
+});
+
+
+app.post('/api/pin/change', async (req, reply) => {
+  const actual = String(req.body?.actual || '');
+  const nuevo = String(req.body?.nuevo || '').trim();
+  if (actual !== state.pin) {
+    reply.code(401);
+    return { ok: false, error: 'PIN actual incorrecto' };
+  }
+  if (!/^[0-9]{4,10}$/.test(nuevo)) {
+    reply.code(400);
+    return { ok: false, error: 'El PIN debe tener de 4 a 10 dígitos' };
+  }
+  state.pin = nuevo;
+  await save();
+  app.log.info('PIN actualizado');
+  return { ok: true };
+});
 
 const PORT = process.env.PORT || 3000;
 

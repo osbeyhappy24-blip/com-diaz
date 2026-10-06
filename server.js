@@ -5,6 +5,7 @@ import Fastify from 'fastify';
 import cron from 'node-cron';
 import fs from 'fs';
 import path from 'path';
+import { SOURCES, DEFAULT_SOURCE_STATE, listSources } from './sources.js';
 
 const BRAND = `
  ██████╗ ██████╗ ███╗   ███╗██████╗ ██╗ █████╗ ███████╗
@@ -90,6 +91,7 @@ const DEFAULTS = {
   margin: 35,
   categories: DEFAULT_CATEGORIES,
   results: [],
+  sources: JSON.parse(JSON.stringify(DEFAULT_SOURCE_STATE)),
 };
 
 const state = fs.existsSync(DB_FILE)
@@ -99,58 +101,122 @@ const state = fs.existsSync(DB_FILE)
 const save = () => fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2));
 
 const adapters = {
-  dummyjson: {
-    label: 'DummyJSON (prueba)',
-    async searchByCategory(q) {
-      const res = await fetch(
-        `https://dummyjson.com/products/category/${encodeURIComponent(q)}?limit=10`
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      return (data.products || []).map(p => ({
-        id: `${q}-${p.id}`,
-        title: p.title,
-        price: p.price,
-        image: p.thumbnail,
-        url: `https://dummyjson.com/products/${p.id}`,
-        source: 'dummyjson',
-      }));
-    },
-  },
+  async searchFrom(sourceId, query, sourceState) {
+    const src = SOURCES[sourceId];
+    if (!src) throw new Error('Fuente desconocida: ' + sourceId);
+    const st = sourceState[sourceId] || {};
+    if (!st.enabled) return [];
+    return await src.searchByCategory(query, st.config || {});
+  }
 };
+
+
+function buildShareText(opts = {}) {
+  const D = String.fromCharCode(36);
+  const maxTotal = Number(opts.limit) || 30;
+  const perCat = Number(opts.perCategory) || 5;
+  const onlyCats = Array.isArray(opts.categories) && opts.categories.length
+    ? opts.categories
+    : [...new Set(state.results.map(r => r.category))];
+
+  const grouped = {};
+  for (const r of state.results) {
+    if (!onlyCats.includes(r.category)) continue;
+    grouped[r.category] = grouped[r.category] || [];
+    if (grouped[r.category].length < perCat) grouped[r.category].push(r);
+  }
+
+  const out = [];
+  out.push('\uD83D\uDECD *Comdiaz - Ofertas disponibles*');
+  out.push('_Precios actualizados - Envios a todo el pais_');
+  out.push('');
+  let count = 0;
+  for (const cat of onlyCats) {
+    const items = grouped[cat] || [];
+    if (!items.length) continue;
+    if (count >= maxTotal) break;
+    out.push('--------------------------');
+    out.push('*' + cat.toUpperCase() + '*');
+    out.push('--------------------------');
+    for (const it of items) {
+      if (count >= maxTotal) break;
+      out.push('- ' + it.title);
+      out.push('  Precio: ' + D + it.salePrice);
+      if (it.url) out.push('  ' + it.url);
+      out.push('');
+      count++;
+    }
+  }
+  out.push('--------------------------');
+  out.push('Pedidos por WhatsApp');
+  out.push('Responde este mensaje con el nombre del producto');
+  return { text: out.join('\n'), count };
+}
+
+function guardarResumenAutomatico(trigger) {
+  try {
+    if (typeof buildShareText !== "function") {
+      app.log.warn('buildShareText no disponible, salto resumen');
+      return;
+    }
+    const r = buildShareText({ limit: 30, perCategory: 5 });
+    state.summaries = state.summaries || [];
+    state.summaries.unshift({
+      id: Date.now(),
+      trigger,
+      createdAt: new Date().toISOString(),
+      count: r.count,
+      products: state.results.length,
+      margin: state.margin,
+      times: state.automation.publishTimes,
+      text: r.text,
+    });
+    if (state.summaries.length > 20) state.summaries.length = 20;
+    app.log.info('Resumen automatico guardado (' + r.count + ' productos)');
+  } catch (e) {
+    app.log.error('Error guardando resumen: ' + e.message);
+  }
+}
 
 async function runSearch(trigger = 'manual') {
   const started = Date.now();
-  app.log.info(`Comdiaz · búsqueda iniciada (${trigger})`);
+  app.log.info('Comdiaz · búsqueda iniciada (' + trigger + ')');
   const found = [];
   let skipped = 0;
+  const fuenteActivas = Object.entries(state.sources || {})
+    .filter(([_, v]) => v && v.enabled)
+    .map(([k]) => k);
+
+  if (fuenteActivas.length === 0) {
+    app.log.warn('No hay fuentes activas. Activa al menos una en el Home.');
+    return 0;
+  }
 
   for (const cat of state.categories) {
     const queries = cat.dummyjson || [];
-    if (!queries.length) {
-      skipped++;
-      continue;
-    }
+    if (!queries.length) { skipped++; continue; }
     for (const q of queries) {
-      try {
-        const items = await adapters.dummyjson.searchByCategory(q);
-        for (const it of items) {
-          const base = it.price;
-          const sale = +(base * (1 + state.margin / 100)).toFixed(2);
-          found.push({
-            ...it,
-            category: cat.label,
-            basePrice: base,
-            salePrice: sale,
-            marginPct: state.margin,
-            foundAt: new Date().toISOString(),
-          });
+      for (const sourceId of fuenteActivas) {
+        try {
+          const items = await adapters.searchFrom(sourceId, q, state.sources);
+          for (const it of items) {
+            const base = it.price;
+            const sale = +(base * (1 + state.margin / 100)).toFixed(2);
+            found.push({
+              ...it,
+              category: cat.label,
+              basePrice: base,
+              salePrice: sale,
+              marginPct: state.margin,
+              foundAt: new Date().toISOString(),
+            });
+          }
+        } catch (e) {
+          app.log.error('  err [' + cat.label + ' · ' + sourceId + ']: ' + e.message);
         }
-      } catch (e) {
-        app.log.error(`  err [${cat.label} · ${q}]: ${e.message}`);
       }
     }
-    app.log.info(`  ok ${cat.label}`);
+    app.log.info('  ok ' + cat.label);
   }
 
   const seen = new Set();
@@ -161,11 +227,12 @@ async function runSearch(trigger = 'manual') {
   });
   state.results = unique;
   state.automation.lastRun = new Date().toISOString();
-  save();
+  guardarResumenAutomatico(trigger);
+  await save();
 
   const ms = Date.now() - started;
-  app.log.info(`Comdiaz · ${found.length} productos · ${skipped} categorías sin equivalente en prueba · ${ms}ms`);
-  return found.length;
+  app.log.info('Comdiaz · ' + unique.length + ' productos · ' + skipped + ' categorías sin mapeo · ' + fuenteActivas.length + ' fuentes · ' + ms + 'ms');
+  return unique.length;
 }
 
 let task = null;
@@ -322,6 +389,53 @@ app.post('/api/share', async (req) => {
 
   return { ok: true, text: out.join('\n'), count };
 });
+
+
+app.get('/api/sources', async () => ({
+  ok: true,
+  sources: listSources().map(src => ({
+    ...src,
+    enabled: !!(state.sources?.[src.id]?.enabled),
+    hasConfig: Object.values(state.sources?.[src.id]?.config || {}).some(v => v),
+  })),
+}));
+
+app.post('/api/sources/toggle', async (req) => {
+  const id = String(req.body?.id || "");
+  const enabled = !!req.body?.enabled;
+  if (!SOURCES[id]) return { ok: false, error: "Fuente desconocida" };
+  state.sources = state.sources || {};
+  state.sources[id] = state.sources[id] || { enabled: false, config: {} };
+  state.sources[id].enabled = enabled;
+  await save();
+  return { ok: true, id, enabled };
+});
+
+app.post('/api/sources/config', async (req) => {
+  const id = String(req.body?.id || "");
+  const config = req.body?.config || {};
+  if (!SOURCES[id]) return { ok: false, error: "Fuente desconocida" };
+  state.sources = state.sources || {};
+  state.sources[id] = state.sources[id] || { enabled: false, config: {} };
+  state.sources[id].config = { ...(state.sources[id].config || {}), ...config };
+  await save();
+  return { ok: true, id };
+});
+
+
+app.get('/api/summaries', async () => ({
+  ok: true,
+  total: (state.summaries || []).length,
+  summaries: (state.summaries || []).map(s => ({
+    id: s.id, trigger: s.trigger, createdAt: s.createdAt,
+    count: s.count, products: s.products, margin: s.margin, times: s.times,
+  })),
+}));
+
+app.get('/api/summaries/latest', async () => ({
+  ok: true,
+  summary: (state.summaries || [])[0] || null,
+}));
 
 const PORT = process.env.PORT || 3000;
 

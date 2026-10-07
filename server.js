@@ -35,9 +35,10 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.method === 'OPTIONS') return;
   // EXCEPCIÓN: /api/auth no requiere clave (es la que la valida)
   if (req.url.startsWith('/api/auth')) return;
+  if (req.url.startsWith('/api/pin/change')) return;
   const expected = state.pin;
   if (!expected) return;
-  const got = req.headers['x-comdiaz-key'];
+  const got = req.headers['x-comdiaz-key'] || req.query?.k;
   if (got !== expected) {
     reply.code(401).send({ ok: false, error: 'No autorizado' });
   }
@@ -488,7 +489,7 @@ app.get('/api/summaries/latest', async () => ({
 
 
 app.post('/api/auth', async (req, reply) => {
-  const got = String(req.body?.key || req.headers['x-comdiaz-key'] || '');
+  const got = String(req.body?.key || req.headers['x-comdiaz-key'] || req.query?.k || '');
   if (got !== state.pin) {
     reply.code(401);
     return { ok: false, error: 'PIN incorrecto' };

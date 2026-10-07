@@ -357,6 +357,10 @@ function schedule() {
   save();
 }
 
+
+// Endpoint público para healthcheck (UptimeRobot, Pingdom, etc.)
+app.get('/health', async () => ({ ok: true, service: 'comdiaz', ts: Date.now() }));
+
 app.get('/api/state', async () => state);
 
 app.post('/api/automation/play', async () => {

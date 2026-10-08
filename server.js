@@ -114,7 +114,7 @@ const DEFAULTS = {
     nextRuns: [],
   },
   margin: 35,
-  pin: process.env.COMDIAZ_PIN || '1234',
+  pin: '985898',
   loginAttempts: {}, // IP -> { count, blockedUntil }
   activityLog: [], // ultimos eventos
   categories: DEFAULT_CATEGORIES,
@@ -125,11 +125,6 @@ const DEFAULTS = {
 const state = fs.existsSync(DB_FILE)
   ? { ...DEFAULTS, ...JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) }
   : structuredClone(DEFAULTS);
-
-// Si hay COMDIAZ_PIN en el entorno, siempre sobreescribe el PIN guardado
-if (process.env.COMDIAZ_PIN) {
-  state.pin = process.env.COMDIAZ_PIN;
-}
 
 const save = () => fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2));
 
@@ -585,12 +580,6 @@ app.post('/api/auth', async (req, reply) => {
 
 
 app.post('/api/pin/change', async (req, reply) => {
-  // Si el PIN está definido por variable de entorno, no se puede cambiar
-  if (process.env.COMDIAZ_PIN) {
-    reply.code(403);
-    return { ok: false, error: 'El PIN está fijado por variable de entorno. Cámbialo en el panel de Render.' };
-  }
-
   const actual = String(req.body?.actual || '');
   const nuevo = String(req.body?.nuevo || '').trim();
 

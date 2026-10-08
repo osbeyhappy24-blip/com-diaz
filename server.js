@@ -115,6 +115,8 @@ const DEFAULTS = {
   },
   margin: 35,
   pin: '1234',
+  loginAttempts: {}, // IP -> { count, blockedUntil }
+  activityLog: [], // ultimos eventos
   categories: DEFAULT_CATEGORIES,
   results: [],
   sources: JSON.parse(JSON.stringify(DEFAULT_SOURCE_STATE)),
@@ -260,6 +262,58 @@ function guardarResumenAutomatico(trigger) {
   }
 }
 
+
+function logActivity(tipo, detalle) {
+  try {
+    state.activityLog = state.activityLog || [];
+    state.activityLog.unshift({
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      ts: new Date().toISOString(),
+      tipo,
+      detalle: detalle || {},
+    });
+    // Mantener solo los ultimos 200 eventos
+    if (state.activityLog.length > 200) state.activityLog.length = 200;
+  } catch(e) { app.log.error("Error logActivity: " + e.message); }
+}
+
+function getClientIP(req) {
+  return req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+         req.headers["x-real-ip"] ||
+         req.ip ||
+         "desconocida";
+}
+
+function chequearBloqueo(ip) {
+  const reg = state.loginAttempts?.[ip];
+  if (!reg) return { bloqueado: false };
+  if (reg.blockedUntil && reg.blockedUntil > Date.now()) {
+    const min = Math.ceil((reg.blockedUntil - Date.now()) / 60000);
+    return { bloqueado: true, minutosRestantes: min };
+  }
+  if (reg.blockedUntil && reg.blockedUntil <= Date.now()) {
+    delete state.loginAttempts[ip];
+  }
+  return { bloqueado: false };
+}
+
+function registrarIntentoFallido(ip) {
+  state.loginAttempts = state.loginAttempts || {};
+  const reg = state.loginAttempts[ip] || { count: 0 };
+  reg.count++;
+  reg.lastAttempt = Date.now();
+  if (reg.count >= 5) {
+    reg.blockedUntil = Date.now() + 15 * 60 * 1000; // 15 min
+    app.log.warn("IP bloqueada por 15 min: " + ip);
+    logActivity("ip_blocked", { ip, intentos: reg.count });
+  }
+  state.loginAttempts[ip] = reg;
+}
+
+function limpiarIntentos(ip) {
+  if (state.loginAttempts?.[ip]) delete state.loginAttempts[ip];
+}
+
 async function runSearch(trigger = 'manual') {
   const started = Date.now();
   app.log.info('Comdiaz · búsqueda iniciada (' + trigger + ')');
@@ -313,6 +367,7 @@ async function runSearch(trigger = 'manual') {
   await save();
 
   const ms = Date.now() - started;
+  logActivity('search', { trigger, productos: unique.length, categorias: state.categories.length, fuentes: fuenteActivas.length });
   app.log.info('Comdiaz · ' + unique.length + ' productos · ' + skipped + ' categorías sin mapeo · ' + fuenteActivas.length + ' fuentes · ' + ms + 'ms');
   return unique.length;
 }
@@ -370,6 +425,7 @@ app.post('/api/automation/play', async () => {
   state.automation.running = true;
   await save();
   app.log.info('Comdiaz · play activado, primera búsqueda en ' + delay + 's');
+  logActivity('play', { delay });
   // Solo la primera búsqueda se retrasa
   setTimeout(() => {
     if (state.automation.running) {
@@ -383,11 +439,17 @@ app.post('/api/automation/pause', async () => {
   state.automation.running = false;
   save();
   app.log.info('Comdiaz · automatización pausada');
+  logActivity('pause', {});
   return { ok: true };
 });
 
 app.post('/api/margin', async (req) => {
   state.margin = Number(req.body?.margin) || state.margin;
+  const marginViejo = state.margin;
+  state.margin = Number(req.body?.margin) || state.margin;
+  if (marginViejo !== state.margin) logActivity('margin', { viejo: marginViejo, nuevo: state.margin });
+  // Evitar doble asignacion
+  state.margin = state.margin;
   state.results = state.results.map(r => ({
     ...r,
     salePrice: +(r.basePrice * (1 + state.margin / 100)).toFixed(2),
@@ -418,6 +480,8 @@ app.post('/api/categories/remove', async (req) => {
 app.post('/api/publish-times', async (req) => {
   const times = Array.isArray(req.body?.times) ? req.body.times : null;
   if (times && times.length) {
+    const tiemposViejos = state.automation.publishTimes;
+    logActivity('publish_times', { viejo: tiemposViejos, nuevo: times });
     state.automation.publishTimes = times;
     schedule();
   }
@@ -489,11 +553,28 @@ app.get('/api/summaries/latest', async () => ({
 
 
 app.post('/api/auth', async (req, reply) => {
+  const ip = getClientIP(req);
   const got = String(req.body?.key || req.headers['x-comdiaz-key'] || req.query?.k || '');
+
+  // Chequear si la IP esta bloqueada
+  const bloqueo = chequearBloqueo(ip);
+  if (bloqueo.bloqueado) {
+    logActivity('login_blocked', { ip, minutosRestantes: bloqueo.minutosRestantes });
+    reply.code(429);
+    return { ok: false, error: 'Demasiados intentos. Espera ' + bloqueo.minutosRestantes + ' min.' };
+  }
+
   if (got !== state.pin) {
+    registrarIntentoFallido(ip);
+    logActivity('login_failed', { ip, intento: (state.loginAttempts[ip]?.count || 1) });
     reply.code(401);
     return { ok: false, error: 'PIN incorrecto' };
   }
+
+  // PIN correcto
+  limpiarIntentos(ip);
+  logActivity('login_success', { ip });
+  await save();
   return { ok: true };
 });
 
@@ -510,9 +591,34 @@ app.post('/api/pin/change', async (req, reply) => {
     return { ok: false, error: 'El PIN debe tener de 4 a 10 dígitos' };
   }
   state.pin = nuevo;
+  logActivity('pin_change', { ip: getClientIP(req) });
   await save();
   app.log.info('PIN actualizado');
   return { ok: true };
+});
+
+
+app.get('/api/activity', async (req) => {
+  const limit = Number(req.query?.limit) || 50;
+  const tipo = req.query?.tipo;
+  let log = state.activityLog || [];
+  if (tipo) log = log.filter(e => e.tipo === tipo);
+  return { ok: true, total: log.length, events: log.slice(0, limit) };
+});
+
+app.delete('/api/activity', async () => {
+  state.activityLog = [];
+  logActivity("log_cleared", {});
+  await save();
+  return { ok: true };
+});
+
+app.get('/api/login-attempts', async () => {
+  const ahora = Date.now();
+  const activos = Object.entries(state.loginAttempts || {})
+    .filter(([_, r]) => r.blockedUntil && r.blockedUntil > ahora)
+    .map(([ip, r]) => ({ ip, minutos: Math.ceil((r.blockedUntil - ahora) / 60000) }));
+  return { ok: true, bloqueados: activos };
 });
 
 const PORT = process.env.PORT || 3000;

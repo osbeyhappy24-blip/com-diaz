@@ -42,6 +42,8 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.method === 'OPTIONS') return;
   // EXCEPCIÓN: /api/auth no requiere clave (es la que la valida)
   if (req.url.startsWith('/api/auth')) return;
+  if (req.url.startsWith('/api/public/')) return;
+  if (req.url.startsWith('/ebay-notification')) return;
   if (req.url.startsWith('/api/pin/change')) return;
   const expected = state.pin;
   if (!expected) return;
@@ -122,6 +124,16 @@ const DEFAULTS = {
   },
   margin: 35,
   pin: '985898',
+  published: [],
+  productosManuales: [], // productos locales agregados manualmente // IDs publicados al catálogo público
+  shopConfig: {
+    whatsapp: '5351425691',
+    titulo: 'Comdiaz Shop',
+    subtitulo: 'Productos importados y locales',
+    publicarAutomatico: true,
+    maxProductos: 200,
+    mostrarPrecioBase: false,
+  },
   loginAttempts: {}, // IP -> { count, blockedUntil }
   activityLog: [], // ultimos eventos
   categories: DEFAULT_CATEGORIES,
@@ -375,6 +387,10 @@ async function runSearch(trigger = 'manual') {
     return true;
   });
   state.results = unique;
+  // Publicación automática (si está activada)
+  if (state.shopConfig?.publicarAutomatico) {
+    state.published = unique.map(r => r.id);
+  }
   state.automation.lastRun = new Date().toISOString();
   guardarResumenAutomatico(trigger);
   await save();
@@ -728,6 +744,246 @@ app.post('/ebay-notification', async (req, reply) => {
 app.post('/api/telegram-test', async () => {
   const r = await notifyTelegram('🧪 Test manual desde Comdiaz · ' + new Date().toLocaleString('es'));
   return r;
+});
+
+
+// ═══════════════════════════════════════════════
+// COMDIAZ SHOP — Endpoints públicos
+// ═══════════════════════════════════════════════
+
+// GET público: catálogo de productos publicados
+app.get('/api/public/catalog', async (req) => {
+  const limit = Math.min(Number(req.query?.limit) || 200, state.shopConfig?.maxProductos || 200);
+  const categoria = req.query?.categoria;
+
+  // Importados (siempre se publican automáticamente)
+  let items = (state.results || []).filter(r => (state.published || []).includes(r.id));
+
+  // Manuales (solo los publicados y con stock)
+  if (Array.isArray(state.productosManuales)) {
+    const manualesPublicos = state.productosManuales.filter(p => p.publicado && (p.cantidad || 0) > 0);
+    items = items.concat(manualesPublicos);
+  }
+
+  if (categoria && categoria !== 'todas') {
+    items = items.filter(p => p.category === categoria);
+  }
+
+  items = items.slice(0, limit);
+
+  // NUNCA exponer el precio base al público
+  const publicos = items.map(p => ({
+    id: p.id,
+    title: p.title,
+    image: p.image,
+    images: p.images || [p.image].filter(Boolean),
+    salePrice: p.salePrice,
+    category: p.category || p.source,
+    source: p.source,
+    url: p.url,
+    condition: p.extra?.condition || '',
+  }));
+
+  // Categorías disponibles
+  const categorias = [...new Set([
+    ...(state.results || [])
+      .filter(r => (state.published || []).includes(r.id))
+      .map(r => r.category),
+    ...(state.productosManuales || [])
+      .filter(p => p.publicado && (p.cantidad || 0) > 0)
+      .map(p => p.category || 'Local')
+  ])].sort();
+
+  return {
+    ok: true,
+    total: publicos.length,
+    categorias,
+    config: {
+      titulo: state.shopConfig?.titulo || 'Comdiaz Shop',
+      subtitulo: state.shopConfig?.subtitulo || '',
+      whatsapp: state.shopConfig?.whatsapp || '',
+    },
+    products: publicos,
+  };
+});
+
+// GET público: detalle de un producto
+app.get('/api/public/catalog/:id', async (req, reply) => {
+  const id = req.params.id;
+  const p = (state.results || []).find(r => r.id === id) ||
+            (state.productosManuales || []).find(r => r.id === id);
+  if (!p || !(state.published || []).includes(p.id)) {
+    reply.code(404);
+    return { ok: false, error: 'No encontrado' };
+  }
+  return {
+    ok: true,
+    product: {
+      id: p.id,
+      title: p.title,
+      image: p.image,
+      images: p.images || [p.image].filter(Boolean),
+      salePrice: p.salePrice,
+      category: p.category || p.source,
+      source: p.source,
+      url: p.url,
+      condition: p.extra?.condition || '',
+    }
+  };
+});
+
+// POST con auth: publicar producto
+app.post('/api/publish/:id', async (req) => {
+  const id = req.params.id;
+  state.published = state.published || [];
+  if (!state.published.includes(id)) {
+    state.published.push(id);
+    logActivity('publish', { id });
+    await save();
+  }
+  return { ok: true, total: state.published.length };
+});
+
+// POST con auth: despublicar
+app.post('/api/unpublish/:id', async (req) => {
+  const id = req.params.id;
+  state.published = (state.published || []).filter(x => x !== id);
+  logActivity('unpublish', { id });
+  await save();
+  return { ok: true, total: state.published.length };
+});
+
+// GET con auth: ver IDs publicados
+app.get('/api/published', async () => ({
+  ok: true,
+  total: (state.published || []).length,
+  ids: state.published || [],
+}));
+
+// POST con auth: publicar todos los resultados actuales
+app.post('/api/publish-all', async () => {
+  state.published = (state.results || []).map(r => r.id);
+  logActivity('publish_all', { total: state.published.length });
+  await save();
+  return { ok: true, total: state.published.length };
+});
+
+// POST con auth: despublicar todo
+app.post('/api/unpublish-all', async () => {
+  state.published = [];
+  logActivity('unpublish_all', {});
+  await save();
+  return { ok: true, total: 0 };
+});
+
+// GET público: configuración del shop
+app.get('/api/public/config', async () => ({
+  ok: true,
+  config: {
+    titulo: state.shopConfig?.titulo || 'Comdiaz Shop',
+    subtitulo: state.shopConfig?.subtitulo || '',
+    whatsapp: state.shopConfig?.whatsapp || '',
+    maxProductos: state.shopConfig?.maxProductos || 200,
+  },
+}));
+
+// POST con auth: actualizar config del shop
+app.post('/api/shop-config', async (req) => {
+  state.shopConfig = { ...(state.shopConfig || {}), ...(req.body || {}) };
+  logActivity('shop_config', { campos: Object.keys(req.body || {}) });
+  await save();
+  return { ok: true, config: state.shopConfig };
+});
+
+
+// ═══════════════════════════════════════════════
+// COMDIAZ SHOP — Productos manuales (locales)
+// ═══════════════════════════════════════════════
+
+// GET con auth: lista los productos manuales
+app.get('/api/manual/products', async () => ({
+  ok: true,
+  total: (state.productosManuales || []).length,
+  products: state.productosManuales || [],
+}));
+
+// POST con auth: agregar producto manual
+app.post('/api/manual/products', async (req) => {
+  const body = req.body || {};
+  if (!body.title || !body.image || !body.priceBase) {
+    return { ok: false, error: 'Faltan: title, image, priceBase' };
+  }
+  const margenPct = Number(body.margenPct) || state.margin || 35;
+  const priceBase = Number(body.priceBase) || 0;
+  const salePrice = +(priceBase * (1 + margenPct / 100)).toFixed(2);
+
+  const producto = {
+    id: 'manual-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+    title: String(body.title).slice(0, 200),
+    image: body.image,
+    images: Array.isArray(body.images) ? body.images.slice(0, 5) : [body.image],
+    category: String(body.category || 'Local').slice(0, 80),
+    description: String(body.description || '').slice(0, 1000),
+    priceBase: priceBase,
+    salePrice: salePrice,
+    margenPct: margenPct,
+    cantidad: Number(body.cantidad) || 1,
+    publicado: body.publicado !== false,
+    source: 'manual',
+    createdAt: new Date().toISOString(),
+  };
+  state.productosManuales = state.productosManuales || [];
+  state.productosManuales.unshift(producto);
+  logActivity('manual_add', { id: producto.id, title: producto.title });
+  await save();
+  return { ok: true, product: producto };
+});
+
+// PUT con auth: editar producto manual
+app.put('/api/manual/products/:id', async (req, reply) => {
+  const id = req.params.id;
+  const idx = (state.productosManuales || []).findIndex(p => p.id === id);
+  if (idx === -1) { reply.code(404); return { ok: false, error: 'No encontrado' }; }
+  const body = req.body || {};
+  const p = state.productosManuales[idx];
+
+  if (body.title !== undefined) p.title = String(body.title).slice(0, 200);
+  if (body.description !== undefined) p.description = String(body.description).slice(0, 1000);
+  if (body.category !== undefined) p.category = String(body.category).slice(0, 80);
+  if (body.priceBase !== undefined) p.priceBase = Number(body.priceBase);
+  if (body.margenPct !== undefined) p.margenPct = Number(body.margenPct);
+  if (body.cantidad !== undefined) p.cantidad = Number(body.cantidad);
+  if (body.publicado !== undefined) p.publicado = !!body.publicado;
+  if (body.image !== undefined) p.image = body.image;
+
+  // Recalcular precio venta
+  p.salePrice = +(p.priceBase * (1 + p.margenPct / 100)).toFixed(2);
+
+  logActivity('manual_edit', { id });
+  await save();
+  return { ok: true, product: p };
+});
+
+// DELETE con auth: eliminar producto manual
+app.delete('/api/manual/products/:id', async (req) => {
+  const id = req.params.id;
+  state.productosManuales = (state.productosManuales || []).filter(p => p.id !== id);
+  logActivity('manual_delete', { id });
+  await save();
+  return { ok: true };
+});
+
+// POST con auth: reducir cantidad (vendido)
+app.post('/api/manual/products/:id/sold', async (req, reply) => {
+  const id = req.params.id;
+  const p = (state.productosManuales || []).find(x => x.id === id);
+  if (!p) { reply.code(404); return { ok: false, error: 'No encontrado' }; }
+  const cantidad = Number(req.body?.cantidad) || 1;
+  p.cantidad = Math.max(0, (p.cantidad || 0) - cantidad);
+  if (p.cantidad === 0) p.publicado = false;
+  logActivity('manual_sold', { id, cantidad: p.cantidad });
+  await save();
+  return { ok: true, cantidad: p.cantidad };
 });
 
 const PORT = process.env.PORT || 3000;

@@ -775,10 +775,17 @@ app.get('/api/public/catalog', async (req) => {
 
   // NUNCA exponer el precio base al público
   // Forzar HTTPS en las imágenes
+  // Proxy de imágenes (evita bloqueo 403 de eBay)
+  function proxearImagen(url) {
+    if (!url) return '';
+    const clean = String(url).replace(/^http:\/\//, 'https://');
+    return 'https://wsrv.nl/?url=' + encodeURIComponent(clean) + '&w=500&output=webp&q=80';
+  }
+
   const publicos = items.map(p => {
-    const img = String(p.image || '').replace(/^http:\/\//, 'https://');
+    const img = proxearImagen(p.image);
     const imgs = (p.images || [p.image].filter(Boolean))
-      .map(u => String(u).replace(/^http:\/\//, 'https://'))
+      .map(u => proxearImagen(u))
       .filter(u => u.length > 10);
     return {
       id: p.id,

@@ -544,11 +544,18 @@ app.post('/api/margin', async (req) => {
 
 app.post('/api/categories/add', async (req) => {
   const label = String(req.body?.label || req.body?.category || '').trim();
-  const dummyjson = Array.isArray(req.body?.dummyjson) ? req.body.dummyjson : [];
   if (!label) return { ok: false, error: 'label requerido' };
+
+  // Si no se dan keywords explicitos, usar el label como keyword
+  let dummyjson = Array.isArray(req.body?.dummyjson) ? req.body.dummyjson : [];
+  if (!dummyjson.length) {
+    dummyjson = [label.toLowerCase()];
+  }
+
   if (!state.categories.find(c => c.label === label)) {
     state.categories.push({ label, dummyjson });
-    save();
+    logActivity('category_add', { label, dummyjson });
+    await save();
   }
   return { ok: true, categories: state.categories };
 });

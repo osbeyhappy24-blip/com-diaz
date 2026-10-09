@@ -9,6 +9,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { SOURCES, DEFAULT_SOURCE_STATE, listSources } from './sources.js';
 import { notifyTelegram } from './telegram.js';
+import { subirImagen } from './imgbb.js';
 
 const BRAND = `
  ██████╗ ██████╗ ███╗   ███╗██████╗ ██╗ █████╗ ███████╗
@@ -1228,6 +1229,47 @@ app.get('/api/public/live-search', async (req, reply) => {
     app.log.error('live-search error: ' + e.message);
     reply.code(500);
     return { ok: false, error: 'Error: ' + e.message };
+  }
+});
+
+
+// ═══════════════════════════════════════════════
+// SUBIDA DE IMÁGENES (ImgBB)
+// ═══════════════════════════════════════════════
+app.post('/api/upload-image', async (req, reply) => {
+  try {
+    const { image, nombre } = req.body || {};
+    if (!image) {
+      reply.code(400);
+      return { ok: false, error: 'Falta la imagen' };
+    }
+
+    // Límite: 5 subidas/min por IP
+    const ip = req.headers['cf-connecting-ip'] ||
+               req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+               req.ip || 'desconocida';
+    const key = ip + ':upload';
+    const ahora = Date.now();
+    const entry = rateLimitMap.get(key) || { count: 0, resetAt: ahora + 60000 };
+    if (ahora > entry.resetAt) {
+      entry.count = 0;
+      entry.resetAt = ahora + 60000;
+    }
+    entry.count++;
+    rateLimitMap.set(key, entry);
+
+    if (entry.count > 5) {
+      reply.code(429);
+      return { ok: false, error: 'Demasiadas subidas. Espera 1 minuto.' };
+    }
+
+    const resultado = await subirImagen(image, nombre);
+    logActivity('upload_image', { url: resultado.url.slice(0, 60) });
+    return { ok: true, ...resultado };
+  } catch (e) {
+    app.log.error('Error subiendo imagen: ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
   }
 });
 

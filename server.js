@@ -1,3 +1,4 @@
+// Comdiaz Backend - eBay Production with obfuscated credentials
 // comdiaz/backend/server.js
 // Comdiaz · Backend de automatización de compras y publicación
 

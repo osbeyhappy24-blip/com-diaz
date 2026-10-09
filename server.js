@@ -354,8 +354,11 @@ async function runSearch(trigger = 'manual') {
   }
 
   for (const cat of state.categories) {
-    const queries = cat.dummyjson || [];
-    if (!queries.length) { skipped++; continue; }
+    let queries = cat.dummyjson || [];
+    // Si no tiene keywords, usar el label como fallback
+    if (!queries.length) {
+      queries = [cat.label.toLowerCase()];
+    }
     for (const q of queries) {
       for (const sourceId of fuenteActivas) {
         try {

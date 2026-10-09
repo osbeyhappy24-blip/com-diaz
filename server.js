@@ -116,7 +116,7 @@ const DEFAULTS = {
   automation: {
     running: false,
     delaySeconds: 5,
-    publishTimes: ['09:00', '15:00', '21:00'],
+    publishTimes: ["10:30"],
     lastRun: null,
     nextRuns: [],
   },

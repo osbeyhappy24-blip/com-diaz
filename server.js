@@ -19,6 +19,10 @@ const BRAND = `
 
 const app = Fastify({ logger: true });
 
+// Zona horaria configurable (por defecto Cuba = America/Havana)
+const APP_TZ = process.env.COMDIAZ_TZ || 'America/Havana';
+
+
 // Tolerar body vacío cuando Content-Type es JSON
 app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
   if (!body || body.length === 0) return done(null, {});
@@ -375,11 +379,38 @@ async function runSearch(trigger = 'manual') {
 let task = null;
 
 function timesToCron(times) {
-  const hours = times
-    .map(t => t.split(':')[0])
-    .filter(h => /^\d{1,2}$/.test(h))
-    .join(',');
-  return `0 ${hours} * * *`;
+  // Convierte horas locales (APP_TZ) a horas UTC para el cron
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TZ,
+    hour: '2-digit', minute: '2-digit', hour12: false
+  });
+  const parts = fmt.formatToParts(now);
+  const get = (type) => parts.find(p => p.type === type)?.value;
+  const horaLocal = parseInt(get('hour'), 10);
+  const horaUTC = now.getUTCHours();
+
+  // Calcular offset (puede ser -12 a +14)
+  let offset = horaUTC - horaLocal;
+  // Normalizar
+  if (offset > 12) offset -= 24;
+  if (offset < -12) offset += 24;
+
+  const horasUTC = times
+    .map(t => {
+      const [h, m] = t.split(':').map(Number);
+      let utcH = (h + offset + 24) % 24;
+      return utcH;
+    })
+    .filter(h => Number.isInteger(h))
+    .sort((a,b) => a-b);
+
+  // Si todos los minutos no son cero, hay que usar cron más complejo.
+  // Por simplicidad, solo soportamos minutos = 0.
+  const minutos = times.map(t => parseInt(t.split(':')[1], 10));
+  const unicoMinuto = minutos.every(m => m === minutos[0]) ? minutos[0] : 0;
+
+  return unicoMinuto + ' ' + horasUTC.join(',') + ' * * *';
 }
 
 function computeNextRuns(times) {
@@ -387,11 +418,35 @@ function computeNextRuns(times) {
   return times
     .map(t => {
       const [h, m] = t.split(':').map(Number);
-      const d = new Date(now);
-      d.setHours(h, m, 0, 0);
-      return d;
+      // Crear la fecha en la zona horaria configurada
+      // Usar formateo manual: "YYYY-MM-DD HH:MM:00" en la zona, luego convertir a ISO
+      const fmt = new Intl.DateTimeFormat('en-CA', {
+        timeZone: APP_TZ,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false
+      });
+      const parts = fmt.formatToParts(now);
+      const get = (type) => parts.find(p => p.type === type)?.value;
+      const nowEnTz = new Date(get('year') + '-' + get('month') + '-' + get('day') + 'T' + get('hour') + ':' + get('minute') + ':' + get('second'));
+
+      // Construir la fecha objetivo "hoy a las HH:MM en APP_TZ"
+      const objetivo = new Date(nowEnTz);
+      objetivo.setHours(h, m, 0, 0);
+
+      // Calcular la diferencia entre la "hora local fingida" y la hora real
+      const diffMin = Math.round((now - nowEnTz) / 60000);
+
+      // Convertir objetivo a UTC sumando el offset
+      const objetivoUTC = new Date(objetivo.getTime() + diffMin * 60000);
+
+      // Si ya pasó, mover al día siguiente
+      if (objetivoUTC <= now) {
+        objetivoUTC.setTime(objetivoUTC.getTime() + 24 * 60 * 60 * 1000);
+      }
+      return objetivoUTC;
     })
-    .filter(d => d > now)
+    .sort((a, b) => a - b)
     .map(d => d.toISOString());
 }
 

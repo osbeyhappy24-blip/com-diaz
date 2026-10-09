@@ -146,11 +146,29 @@ async function searchByCategory(categoryLabel, config = {}) {
   return items.map(it => {
     const img = it.image?.imageUrl || (it.thumbnailImages && it.thumbnailImages[0]?.imageUrl) || '';
     const price = parseFloat(it.price?.value) || 0;
+
+    // Recolectar TODAS las imágenes disponibles
+    const allImages = [];
+    if (img) allImages.push(img.replace('http://', 'https://'));
+    (it.thumbnailImages || []).forEach(t => {
+      if (t.imageUrl) {
+        const url = t.imageUrl.replace('http://', 'https://');
+        if (!allImages.includes(url)) allImages.push(url);
+      }
+    });
+    (it.additionalImages || []).forEach(t => {
+      if (t.imageUrl) {
+        const url = t.imageUrl.replace('http://', 'https://');
+        if (!allImages.includes(url)) allImages.push(url);
+      }
+    });
+
     return {
       id: 'ebay-' + (it.itemId || Math.random().toString(36).slice(2)),
       title: it.title || 'Sin título',
       price: price,
       image: img.replace('http://', 'https://'),
+      images: allImages.slice(0, 5),
       url: it.itemWebUrl || '',
       source: 'ebay',
       extra: {

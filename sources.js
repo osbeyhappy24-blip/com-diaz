@@ -1,3 +1,5 @@
+import { searchByCategory as ebaySearch } from './ebay.js';
+
 // comdiaz/backend/sources.js
 // Registro de fuentes (adapters) de productos
 
@@ -33,6 +35,25 @@ export const SOURCES = {
         url: 'https://dummyjson.com/products/' + p.id,
         source: 'dummyjson',
       }));
+    },
+  },
+
+
+  ebay: {
+    id: 'ebay',
+    label: 'eBay',
+    emoji: '🛒',
+    needsKey: true,
+    keyFields: ['appId', 'certId'],
+    docsUrl: 'https://developer.ebay.com/my/keys',
+    async searchByCategory(query, config) {
+      const environment = config?.environment || 'sandbox';
+      const appId = config?.appId;
+      const certId = config?.certId;
+      if (!appId || !certId) {
+        throw new Error('eBay: faltan App ID y Cert ID. Configúralos en el Home.');
+      }
+      return await ebaySearch(query, { environment, appId, certId, limit: 10 });
     },
   },
 
@@ -96,6 +117,7 @@ export const DEFAULT_SOURCE_STATE = {
   mercadolibre: { enabled: false, config: {} },
   amazon:       { enabled: false, config: { accessKey: '', secretKey: '', partnerTag: '' } },
   shein:        { enabled: false, config: { apiKey: '' } },
+  ebay:         { enabled: false, config: { environment: 'sandbox', appId: '', certId: '' } },
 };
 
 export function listSources() {

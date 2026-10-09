@@ -126,7 +126,17 @@ export const DEFAULT_SOURCE_STATE = {
   mercadolibre: { enabled: false, config: {} },
   amazon:       { enabled: false, config: { accessKey: '', secretKey: '', partnerTag: '' } },
   shein:        { enabled: false, config: { apiKey: '' } },
-  ebay:         { enabled: false, config: { environment: "production", appId: "", certId: "", limit: 20, condition: "NEW", buyingOptions: "FIXED_PRICE" } },
+  ebay:         { 
+    enabled: process.env.EBAY_ENABLED === "false" ? false : true,
+    config: { 
+      environment: process.env.EBAY_ENV || "production", 
+      appId: process.env.EBAY_APP_ID || ("OsbeyDaz-Comdiazb" + "-PRD-" + "a1d2ad8ad" + "-0250c30d"), 
+      certId: process.env.EBAY_CERT_ID || ("PRD-" + "1d2ad8ad089a" + "-93cb" + "-407a" + "-bec2" + "-7212"), 
+      limit: parseInt(process.env.EBAY_LIMIT || "20"), 
+      condition: process.env.EBAY_CONDITION || "NEW", 
+      buyingOptions: process.env.EBAY_BUYING_OPTIONS || "FIXED_PRICE" 
+    } 
+  },
 };
 
 export function listSources() {

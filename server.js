@@ -682,7 +682,7 @@ app.get('/api/login-attempts', async () => {
 // ═══════════════════════════════════════════════
 // eBay Marketplace Account Deletion Notification
 // ═══════════════════════════════════════════════
-const EBAY_VERIFICATION_TOKEN = process.env.EBAY_VERIFICATION_TOKEN || 'comdiaz_verif_2026_x9k2mpQ7vLmN3bR8wZ';
+const EBAY_VERIFICATION_TOKEN = process.env.EBAY_VERIFICATION_TOKEN || 'comdiaz_verif_token_2026_x9k2mpQ7vLmN3bR8wZ';
 const EBAY_ENDPOINT_URL = process.env.EBAY_ENDPOINT_URL || 'https://com-diaz.onrender.com/ebay-notification';
 
 // GET → eBay envía challenge_code y esperamos responder con hash SHA-256

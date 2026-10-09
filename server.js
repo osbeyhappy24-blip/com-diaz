@@ -1006,14 +1006,18 @@ app.get('/api/public/catalog/:id', async (req, reply) => {
     reply.code(404);
     return { ok: false, error: 'No disponible' };
   }
+  const margenActual = Number(state.margin) || 35;
+  const basePrice = Number(p.basePrice) || 0;
+  const salePrice = +(basePrice * (1 + margenActual / 100)).toFixed(2);
+
   return {
     ok: true,
     product: {
       id: p.id,
       title: p.title,
-      image: p.image,
-      images: p.images || [p.image].filter(Boolean),
-      salePrice: p.salePrice,
+      image: proxearImagen(p.image),
+      images: (p.images || [p.image].filter(Boolean)).map(u => proxearImagen(u)),
+      salePrice: salePrice,
       category: p.category || p.source,
       source: p.source,
       url: p.url,

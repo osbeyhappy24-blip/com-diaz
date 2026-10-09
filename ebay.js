@@ -169,7 +169,12 @@ async function searchByCategory(categoryLabel, config = {}) {
       price: price,
       image: img.replace('http://', 'https://'),
       images: allImages.slice(0, 5),
-      url: it.itemWebUrl || '',
+      url: (function() {
+        const u = it.itemWebUrl || '';
+        // Extraer solo https://www.ebay.com/itm/ITEM_ID
+        const m = u.match(/ebay\.com\/itm\/(\d+)/);
+        return m ? 'https://www.ebay.com/itm/' + m[1] : u;
+      })(),
       source: 'ebay',
       extra: {
         condition: it.condition || '',

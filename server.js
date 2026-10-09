@@ -776,10 +776,7 @@ app.get('/api/public/catalog', async (req) => {
   // NUNCA exponer el precio base al público
   // Forzar HTTPS en las imágenes
   const publicos = items.map(p => {
-    let img = String(p.image || '').replace(/^http:\/\//, 'https://');
-    // Mejorar tamaño de imagen eBay: s-l225 → s-l500
-    img = img.replace(/\/s-l\d+\.jpg/, '/s-l500.jpg');
-    img = img.replace(/\/s-l\d+\.webp/, '/s-l500.jpg');
+    const img = String(p.image || '').replace(/^http:\/\//, 'https://');
     const imgs = (p.images || [p.image].filter(Boolean))
       .map(u => String(u).replace(/^http:\/\//, 'https://'))
       .filter(u => u.length > 10);

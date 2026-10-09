@@ -128,7 +128,6 @@ const DEFAULTS = {
   productosManuales: [], // productos locales agregados manualmente // IDs publicados al catálogo público
   shopConfig: {
     whatsapp: '5351425691',
-    horarioAtencion: 'Lun-Sab 9:00am - 9:00pm',
     titulo: 'Comdiaz Shop',
     subtitulo: 'Productos importados y locales',
     publicarAutomatico: true,
@@ -340,57 +339,6 @@ function limpiarIntentos(ip) {
   if (state.loginAttempts?.[ip]) delete state.loginAttempts[ip];
 }
 
-// ═══════════════════════════════════════════════
-// FILTRO DE CONTENIDO BLOQUEADO
-// ═══════════════════════════════════════════════
-const PALABRAS_BLOQUEADAS = [
-  // Adulto / Lencería
-  'lingerie', 'underwear', 'panties', 'bra ', 'bralette', 'thong',
-  'g-string', 'bikini', 'swimsuit', 'adult toy', 'sex toy', 'dildo',
-  'vibrator', 'condom', 'erotic', 'porn', 'nsfw', 'escort',
-  'camiseta interior', 'lenceria', 'lencería', 'ropa interior',
-  'sujetador', 'tanga', 'braga', 'pijama sexy',
-
-  // Bebidas alcohólicas
-  'wine', 'beer', 'vodka', 'whiskey', 'whisky', 'rum', 'tequila',
-  'brandy', 'champagne', 'liquor', 'alcohol', 'cerveza', 'vino',
-  'ron ', 'licor', 'cognac', 'bourbon', 'gin ', 'sake',
-
-  // Tabaco / Vapeo
-  'cigarette', 'cigar', 'tobacco', 'vape', 'vaping', 'e-cigarette',
-  'nicotine', 'hookah', 'shisha', 'bong', 'cigarrillo', 'tabaco',
-  'vapeador', 'pipa ',
-
-  // Armas
-  'gun ', 'rifle', 'pistol', 'revolver', 'ammo', 'ammunition',
-  'firearm', 'knife tactical', 'crossbow', 'silencer', 'magazine gun',
-  'pistola', 'rifle ', 'municion', 'munición', 'cuchillo táctico',
-  'arma ', 'balas ',
-
-  // Drogas
-  'cannabis', 'marijuana', 'cbd oil', 'thc', 'weed', 'cocaine',
-  'heroin', 'meth', 'lsd', 'mdma', 'ecstasy', 'drogas', 'porro',
-
-  // Servicios sospechosos
-  'massage adult', 'massage erotic', 'onlyfans',
-];
-
-function esContenidoBloqueado(producto) {
-  if (!producto) return true;
-
-  // 1) eBay marca adultOnly
-  if (producto.extra?.adultOnly === true) return true;
-  if (producto.adultOnly === true) return true;
-
-  // 2) Buscar en el titulo
-  const titulo = String(producto.title || '').toLowerCase();
-  for (const palabra of PALABRAS_BLOQUEADAS) {
-    if (titulo.includes(palabra)) return true;
-  }
-
-  return false;
-}
-
 async function runSearch(trigger = 'manual') {
   const started = Date.now();
   app.log.info('Comdiaz · búsqueda iniciada (' + trigger + ')');
@@ -416,9 +364,6 @@ async function runSearch(trigger = 'manual') {
         try {
           const items = await adapters.searchFrom(sourceId, q, state.sources);
           for (const it of items) {
-            // FILTRO: descartar contenido bloqueado
-            if (esContenidoBloqueado(it)) continue;
-
             const base = it.price;
             const sale = +(base * (1 + state.margin / 100)).toFixed(2);
             found.push({
@@ -859,8 +804,7 @@ function checkRateLimit(ip, path) {
 
 // Middleware rate limit (aplicado a endpoints públicos)
 app.addHook('onRequest', async (req, reply) => {
-  const ip = req.headers['cf-connecting-ip'] ||
-             req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
              req.headers['x-real-ip'] ||
              req.ip ||
              'desconocida';
@@ -889,9 +833,7 @@ setInterval(() => {
 // ═══════════════════════════════════════════════
 
 // GET público: catálogo de productos publicados
-app.get('/api/public/catalog', async (req, reply) => {
-  reply.header('Cache-Control', 'no-store, no-cache, must-revalidate');
-  reply.header('Pragma', 'no-cache');
+app.get('/api/public/catalog', async (req) => {
   const limit = Math.min(Number(req.query?.limit) || 200, state.shopConfig?.maxProductos || 200);
   const categoria = req.query?.categoria;
 
@@ -910,7 +852,6 @@ app.get('/api/public/catalog', async (req, reply) => {
 
   // Solo mostrar productos CON imagen
   items = items.filter(p => p.image && typeof p.image === 'string' && p.image.length > 10);
-  items = items.filter(p => !esContenidoBloqueado(p));
 
   // Intercalar productos por categoria para que TODAS aparezcan
   // Agrupar por categoria
@@ -987,7 +928,6 @@ app.get('/api/public/catalog', async (req, reply) => {
       titulo: state.shopConfig?.titulo || 'Comdiaz Shop',
       subtitulo: state.shopConfig?.subtitulo || '',
       whatsapp: state.shopConfig?.whatsapp || '',
-      horarioAtencion: state.shopConfig?.horarioAtencion || 'Lun-Sab 9:00am - 9:00pm',
     },
     products: publicos,
   };
@@ -1002,22 +942,14 @@ app.get('/api/public/catalog/:id', async (req, reply) => {
     reply.code(404);
     return { ok: false, error: 'No encontrado' };
   }
-  if (esContenidoBloqueado(p)) {
-    reply.code(404);
-    return { ok: false, error: 'No disponible' };
-  }
-  const margenActual = Number(state.margin) || 35;
-  const basePrice = Number(p.basePrice) || 0;
-  const salePrice = +(basePrice * (1 + margenActual / 100)).toFixed(2);
-
   return {
     ok: true,
     product: {
       id: p.id,
       title: p.title,
-      image: proxearImagen(p.image),
-      images: (p.images || [p.image].filter(Boolean)).map(u => proxearImagen(u)),
-      salePrice: salePrice,
+      image: p.image,
+      images: p.images || [p.image].filter(Boolean),
+      salePrice: p.salePrice,
       category: p.category || p.source,
       source: p.source,
       url: p.url,
@@ -1077,7 +1009,6 @@ app.get('/api/public/config', async () => ({
     titulo: state.shopConfig?.titulo || 'Comdiaz Shop',
     subtitulo: state.shopConfig?.subtitulo || '',
     whatsapp: state.shopConfig?.whatsapp || '',
-    horarioAtencion: state.shopConfig?.horarioAtencion || 'Lun-Sab 9:00am - 9:00pm',
     maxProductos: state.shopConfig?.maxProductos || 200,
   },
 }));
@@ -1179,6 +1110,92 @@ app.post('/api/manual/products/:id/sold', async (req, reply) => {
   logActivity('manual_sold', { id, cantidad: p.cantidad });
   await save();
   return { ok: true, cantidad: p.cantidad };
+});
+
+
+// ═══════════════════════════════════════════════
+// BÚSQUEDA EN VIVO (en eBay, sin publicar al catálogo)
+// ═══════════════════════════════════════════════
+app.get('/api/public/live-search', async (req, reply) => {
+  reply.header('Cache-Control', 'no-store');
+
+  const query = String(req.query?.q || '').trim();
+  if (!query || query.length < 2) {
+    reply.code(400);
+    return { ok: false, error: 'Escribe al menos 2 caracteres' };
+  }
+
+  // Rate limiting: máx 5 búsquedas/min por IP
+  const ip = req.headers['cf-connecting-ip'] ||
+             req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+             req.ip || 'desconocida';
+  const key = ip + ':livesearch';
+  const ahora = Date.now();
+  const entry = rateLimitMap.get(key) || { count: 0, resetAt: ahora + 60000 };
+  if (ahora > entry.resetAt) {
+    entry.count = 0;
+    entry.resetAt = ahora + 60000;
+  }
+  entry.count++;
+  rateLimitMap.set(key, entry);
+
+  if (entry.count > 5) {
+    reply.code(429);
+    return { ok: false, error: 'Demasiadas búsquedas. Espera 1 minuto.' };
+  }
+
+  try {
+    const ebaySource = SOURCES.ebay;
+    if (!ebaySource) {
+      reply.code(500);
+      return { ok: false, error: 'eBay no configurado' };
+    }
+
+    const cfg = state.sources?.ebay?.config || {};
+    if (!cfg.appId || !cfg.certId) {
+      reply.code(500);
+      return { ok: false, error: 'eBay sin credenciales' };
+    }
+
+    const items = await ebaySource.searchByCategory(query, {
+      environment: cfg.environment || 'production',
+      appId: cfg.appId,
+      certId: cfg.certId,
+      limit: 20,
+      condition: 'NEW',
+      buyingOptions: 'FIXED_PRICE',
+    });
+
+    const filtrados = items.filter(it => !esContenidoBloqueado(it));
+    const margenActual = Number(state.margin) || 35;
+
+    const resultados = filtrados.map(it => {
+      const basePrice = Number(it.price) || 0;
+      const salePrice = +(basePrice * (1 + margenActual / 100)).toFixed(2);
+      // Proxy directo (sin helper)
+      const img = 'https://wsrv.nl/?url=' + encodeURIComponent(String(it.image || '').replace(/^http:\/\//, 'https://')) + '&w=500&output=webp&q=80';
+      return {
+        id: 'live-' + (it.id || Math.random().toString(36).slice(2)),
+        title: it.title,
+        image: img,
+        images: [img],
+        salePrice: salePrice,
+        category: 'Busqueda: ' + query,
+        source: 'ebay',
+        url: it.url,
+        condition: it.extra?.condition || '',
+        isLive: true,
+      };
+    });
+
+    logActivity('live_search', { query, total: resultados.length });
+
+    return { ok: true, query, total: resultados.length, products: resultados };
+  } catch (e) {
+    app.log.error('live-search error: ' + e.message);
+    reply.code(500);
+    return { ok: false, error: 'Error: ' + e.message };
+  }
 });
 
 const PORT = process.env.PORT || 3000;

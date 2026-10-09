@@ -339,6 +339,39 @@ function limpiarIntentos(ip) {
   if (state.loginAttempts?.[ip]) delete state.loginAttempts[ip];
 }
 
+
+const PALABRAS_BLOQUEADAS = [
+  'lingerie', 'underwear', 'panties', 'bralette', 'thong',
+  'g-string', 'bikini', 'swimsuit', 'adult toy', 'sex toy', 'dildo',
+  'vibrator', 'condom', 'erotic', 'porn', 'nsfw', 'escort',
+  'camiseta interior', 'lenceria', 'lencería', 'ropa interior',
+  'sujetador', 'tanga', 'braga', 'pijama sexy',
+  'wine', 'beer', 'vodka', 'whiskey', 'whisky', 'rum', 'tequila',
+  'brandy', 'champagne', 'liquor', 'alcohol', 'cerveza', 'vino',
+  'ron ', 'licor', 'cognac', 'bourbon', 'gin ', 'sake',
+  'cigarette', 'cigar', 'tobacco', 'vape', 'vaping', 'e-cigarette',
+  'nicotine', 'hookah', 'shisha', 'bong', 'cigarrillo', 'tabaco',
+  'vapeador', 'pipa ',
+  'gun ', 'rifle', 'pistol', 'revolver', 'ammo', 'ammunition',
+  'firearm', 'knife tactical', 'crossbow', 'silencer',
+  'pistola', 'municion', 'munición', 'cuchillo táctico',
+  'arma ', 'balas ',
+  'cannabis', 'marijuana', 'cbd oil', 'thc', 'weed', 'cocaine',
+  'heroin', 'meth', 'lsd', 'mdma', 'ecstasy', 'drogas', 'porro',
+  'massage adult', 'massage erotic', 'onlyfans',
+];
+
+function esContenidoBloqueado(producto) {
+  if (!producto) return true;
+  if (producto.extra?.adultOnly === true) return true;
+  if (producto.adultOnly === true) return true;
+  const titulo = String(producto.title || '').toLowerCase();
+  for (const palabra of PALABRAS_BLOQUEADAS) {
+    if (titulo.includes(palabra)) return true;
+  }
+  return false;
+}
+
 async function runSearch(trigger = 'manual') {
   const started = Date.now();
   app.log.info('Comdiaz · búsqueda iniciada (' + trigger + ')');

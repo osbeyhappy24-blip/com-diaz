@@ -126,6 +126,7 @@ async function searchByCategory(categoryLabel, config = {}) {
   const url = base + '/buy/browse/v1/item_summary/search?q=' +
     encodeURIComponent(query) +
     '&limit=' + (config.limit || 20) +
+    '&fieldgroups=ADDITIONAL_IMAGES' +
     filterParam;
 
   const res = await fetch(url, {

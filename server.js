@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { SOURCES, DEFAULT_SOURCE_STATE, listSources } from './sources.js';
+import { notifyTelegram } from './telegram.js';
 
 const BRAND = `
  ██████╗ ██████╗ ███╗   ███╗██████╗ ██╗ █████╗ ███████╗
@@ -263,6 +264,12 @@ function guardarResumenAutomatico(trigger) {
     });
     if (state.summaries.length > 20) state.summaries.length = 20;
     app.log.info('Resumen guardado (' + r.count + ' productos, modo ' + r.mode + ')');
+    const header = 'Comdiaz · nueva busqueda' + String.fromCharCode(10)
+      + 'Trigger: ' + trigger + String.fromCharCode(10)
+      + 'Productos: ' + state.results.length + String.fromCharCode(10)
+      + 'Margen: ' + state.margin + '%' + String.fromCharCode(10)
+      + 'Modo: ' + r.mode + String.fromCharCode(10) + String.fromCharCode(10);
+    notifyTelegram(header + r.text.slice(0, 3500)).catch(e => app.log.error('TG: ' + e.message));
   } catch (e) {
     app.log.error('Error guardando resumen: ' + e.message);
   }
@@ -715,6 +722,12 @@ app.post('/ebay-notification', async (req, reply) => {
   // eBay espera 200 OK para confirmar recepción
   reply.code(200);
   return { ok: true };
+});
+
+
+app.post('/api/telegram-test', async () => {
+  const r = await notifyTelegram('🧪 Test manual desde Comdiaz · ' + new Date().toLocaleString('es'));
+  return r;
 });
 
 const PORT = process.env.PORT || 3000;

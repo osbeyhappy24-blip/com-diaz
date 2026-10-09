@@ -340,6 +340,57 @@ function limpiarIntentos(ip) {
   if (state.loginAttempts?.[ip]) delete state.loginAttempts[ip];
 }
 
+// ═══════════════════════════════════════════════
+// FILTRO DE CONTENIDO BLOQUEADO
+// ═══════════════════════════════════════════════
+const PALABRAS_BLOQUEADAS = [
+  // Adulto / Lencería
+  'lingerie', 'underwear', 'panties', 'bra ', 'bralette', 'thong',
+  'g-string', 'bikini', 'swimsuit', 'adult toy', 'sex toy', 'dildo',
+  'vibrator', 'condom', 'erotic', 'porn', 'nsfw', 'escort',
+  'camiseta interior', 'lenceria', 'lencería', 'ropa interior',
+  'sujetador', 'tanga', 'braga', 'pijama sexy',
+
+  // Bebidas alcohólicas
+  'wine', 'beer', 'vodka', 'whiskey', 'whisky', 'rum', 'tequila',
+  'brandy', 'champagne', 'liquor', 'alcohol', 'cerveza', 'vino',
+  'ron ', 'licor', 'cognac', 'bourbon', 'gin ', 'sake',
+
+  // Tabaco / Vapeo
+  'cigarette', 'cigar', 'tobacco', 'vape', 'vaping', 'e-cigarette',
+  'nicotine', 'hookah', 'shisha', 'bong', 'cigarrillo', 'tabaco',
+  'vapeador', 'pipa ',
+
+  // Armas
+  'gun ', 'rifle', 'pistol', 'revolver', 'ammo', 'ammunition',
+  'firearm', 'knife tactical', 'crossbow', 'silencer', 'magazine gun',
+  'pistola', 'rifle ', 'municion', 'munición', 'cuchillo táctico',
+  'arma ', 'balas ',
+
+  // Drogas
+  'cannabis', 'marijuana', 'cbd oil', 'thc', 'weed', 'cocaine',
+  'heroin', 'meth', 'lsd', 'mdma', 'ecstasy', 'drogas', 'porro',
+
+  // Servicios sospechosos
+  'massage adult', 'massage erotic', 'onlyfans',
+];
+
+function esContenidoBloqueado(producto) {
+  if (!producto) return true;
+
+  // 1) eBay marca adultOnly
+  if (producto.extra?.adultOnly === true) return true;
+  if (producto.adultOnly === true) return true;
+
+  // 2) Buscar en el titulo
+  const titulo = String(producto.title || '').toLowerCase();
+  for (const palabra of PALABRAS_BLOQUEADAS) {
+    if (titulo.includes(palabra)) return true;
+  }
+
+  return false;
+}
+
 async function runSearch(trigger = 'manual') {
   const started = Date.now();
   app.log.info('Comdiaz · búsqueda iniciada (' + trigger + ')');
@@ -365,6 +416,9 @@ async function runSearch(trigger = 'manual') {
         try {
           const items = await adapters.searchFrom(sourceId, q, state.sources);
           for (const it of items) {
+            // FILTRO: descartar contenido bloqueado
+            if (esContenidoBloqueado(it)) continue;
+
             const base = it.price;
             const sale = +(base * (1 + state.margin / 100)).toFixed(2);
             found.push({
@@ -856,6 +910,7 @@ app.get('/api/public/catalog', async (req, reply) => {
 
   // Solo mostrar productos CON imagen
   items = items.filter(p => p.image && typeof p.image === 'string' && p.image.length > 10);
+  items = items.filter(p => !esContenidoBloqueado(p));
 
   // Intercalar productos por categoria para que TODAS aparezcan
   // Agrupar por categoria
@@ -946,6 +1001,10 @@ app.get('/api/public/catalog/:id', async (req, reply) => {
   if (!p || !(state.published || []).includes(p.id)) {
     reply.code(404);
     return { ok: false, error: 'No encontrado' };
+  }
+  if (esContenidoBloqueado(p)) {
+    reply.code(404);
+    return { ok: false, error: 'No disponible' };
   }
   return {
     ok: true,

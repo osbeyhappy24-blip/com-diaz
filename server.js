@@ -128,6 +128,7 @@ const DEFAULTS = {
   productosManuales: [], // productos locales agregados manualmente // IDs publicados al catálogo público
   shopConfig: {
     whatsapp: '5351425691',
+    horarioAtencion: 'Lun-Sab 9:00am - 9:00pm',
     titulo: 'Comdiaz Shop',
     subtitulo: 'Productos importados y locales',
     publicarAutomatico: true,
@@ -931,6 +932,7 @@ app.get('/api/public/catalog', async (req, reply) => {
       titulo: state.shopConfig?.titulo || 'Comdiaz Shop',
       subtitulo: state.shopConfig?.subtitulo || '',
       whatsapp: state.shopConfig?.whatsapp || '',
+      horarioAtencion: state.shopConfig?.horarioAtencion || 'Lun-Sab 9:00am - 9:00pm',
     },
     products: publicos,
   };
@@ -1012,6 +1014,7 @@ app.get('/api/public/config', async () => ({
     titulo: state.shopConfig?.titulo || 'Comdiaz Shop',
     subtitulo: state.shopConfig?.subtitulo || '',
     whatsapp: state.shopConfig?.whatsapp || '',
+    horarioAtencion: state.shopConfig?.horarioAtencion || 'Lun-Sab 9:00am - 9:00pm',
     maxProductos: state.shopConfig?.maxProductos || 200,
   },
 }));

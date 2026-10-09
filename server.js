@@ -5,6 +5,7 @@ import Fastify from 'fastify';
 import cron from 'node-cron';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { SOURCES, DEFAULT_SOURCE_STATE, listSources } from './sources.js';
 
 const BRAND = `
@@ -675,6 +676,44 @@ app.get('/api/login-attempts', async () => {
     .filter(([_, r]) => r.blockedUntil && r.blockedUntil > ahora)
     .map(([ip, r]) => ({ ip, minutos: Math.ceil((r.blockedUntil - ahora) / 60000) }));
   return { ok: true, bloqueados: activos };
+});
+
+
+// ═══════════════════════════════════════════════
+// eBay Marketplace Account Deletion Notification
+// ═══════════════════════════════════════════════
+const EBAY_VERIFICATION_TOKEN = process.env.EBAY_VERIFICATION_TOKEN || 'comdiaz_verif_2026_x9k2mpQ7vLmN3bR8wZ';
+const EBAY_ENDPOINT_URL = process.env.EBAY_ENDPOINT_URL || 'https://com-diaz.onrender.com/ebay-notification';
+
+// GET → eBay envía challenge_code y esperamos responder con hash SHA-256
+app.get('/ebay-notification', async (req, reply) => {
+  const challengeCode = req.query?.challenge_code;
+  if (!challengeCode) {
+    return { ok: false, error: 'Falta challenge_code' };
+  }
+  const hash = crypto.createHash('sha256');
+  hash.update(challengeCode);
+  hash.update(EBAY_VERIFICATION_TOKEN);
+  hash.update(EBAY_ENDPOINT_URL);
+  const challengeResponse = hash.digest('hex');
+  app.log.info('eBay challenge respondido');
+  reply.header('Content-Type', 'application/json');
+  return { challengeResponse };
+});
+
+// POST → eBay envía notificaciones reales de eliminación de cuenta
+app.post('/ebay-notification', async (req, reply) => {
+  try {
+    const body = req.body || {};
+    const userId = body?.notification?.data?.userId || 'desconocido';
+    app.log.info('eBay notification recibida: userId=' + userId);
+    logActivity('ebay_notification', { userId });
+  } catch (e) {
+    app.log.error('Error procesando eBay notification: ' + e.message);
+  }
+  // eBay espera 200 OK para confirmar recepción
+  reply.code(200);
+  return { ok: true };
 });
 
 const PORT = process.env.PORT || 3000;

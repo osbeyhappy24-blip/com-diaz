@@ -769,20 +769,29 @@ app.get('/api/public/catalog', async (req) => {
     items = items.filter(p => p.category === categoria);
   }
 
+  // Solo mostrar productos CON imagen
+  items = items.filter(p => p.image && typeof p.image === 'string' && p.image.length > 10);
   items = items.slice(0, limit);
 
   // NUNCA exponer el precio base al público
-  const publicos = items.map(p => ({
-    id: p.id,
-    title: p.title,
-    image: p.image,
-    images: p.images || [p.image].filter(Boolean),
-    salePrice: p.salePrice,
-    category: p.category || p.source,
-    source: p.source,
-    url: p.url,
-    condition: p.extra?.condition || '',
-  }));
+  // Forzar HTTPS en las imágenes
+  const publicos = items.map(p => {
+    const img = String(p.image || '').replace(/^http:\/\//, 'https://');
+    const imgs = (p.images || [p.image].filter(Boolean))
+      .map(u => String(u).replace(/^http:\/\//, 'https://'))
+      .filter(u => u.length > 10);
+    return {
+      id: p.id,
+      title: p.title,
+      image: img,
+      images: imgs,
+      salePrice: p.salePrice,
+      category: p.category || p.source,
+      source: p.source,
+      url: p.url,
+      condition: p.extra?.condition || '',
+    };
+  });
 
   // Categorías disponibles
   const categorias = [...new Set([

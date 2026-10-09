@@ -781,7 +781,36 @@ app.get('/api/public/catalog', async (req) => {
 
   // Solo mostrar productos CON imagen
   items = items.filter(p => p.image && typeof p.image === 'string' && p.image.length > 10);
-  items = items.slice(0, limit);
+
+  // Intercalar productos por categoria para que TODAS aparezcan
+  // Agrupar por categoria
+  const porCategoria = {};
+  for (const p of items) {
+    const cat = p.category || p.source || 'Otros';
+    if (!porCategoria[cat]) porCategoria[cat] = [];
+    porCategoria[cat].push(p);
+  }
+
+  // Round-robin: tomar 1 de cada categoria a la vez
+  const catsIntercalado = Object.keys(porCategoria);
+  const intercalados = [];
+  let idx = 0;
+  let sigueHab = true;
+
+  while (intercalados.length < limit && sigueHab) {
+    sigueHab = false;
+    for (const cat of catsIntercalado) {
+      if (intercalados.length >= limit) break;
+      const lista = porCategoria[cat];
+      if (idx < lista.length) {
+        intercalados.push(lista[idx]);
+        sigueHab = true;
+      }
+    }
+    idx++;
+  }
+
+  items = intercalados;
 
   // NUNCA exponer el precio base al público
   // Forzar HTTPS en las imágenes

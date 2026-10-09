@@ -122,7 +122,7 @@ export const SOURCES = {
 };
 
 export const DEFAULT_SOURCE_STATE = {
-  dummyjson:    { enabled: true,  config: {} },
+  dummyjson:    { enabled: false, config: {} },
   mercadolibre: { enabled: false, config: {} },
   amazon:       { enabled: false, config: { accessKey: '', secretKey: '', partnerTag: '' } },
   shein:        { enabled: false, config: { apiKey: '' } },

@@ -52,50 +52,50 @@ async function getAccessToken(config = {}) {
 
 // Mapear categorías Comdiaz → palabras clave eBay
 const CATEGORY_KEYWORDS = {
-  'Ropa de Mujer':                 'dress',
-  'Ropa de Hombre':                'shirt',
-  'Ropa Infantil':                 'kids',
+  'Ropa de Mujer':                 'women dress',
+  'Ropa de Hombre':                'men shirt',
+  'Ropa Infantil':                 'kids clothes',
   'Calzado':                       'shoes',
-  'Bolsos y Mochilas':             'bag',
-  'Bisutería y Accesorios':        'watch',
-  'Belleza':                       'perfume',
-  'Cabello':                       'shampoo',
+  'Bolsos y Mochilas':             'handbag',
+  'Bisutería y Accesorios':        'jewelry',
+  'Belleza':                       'makeup',
+  'Cabello':                       'hair',
   'Barbería':                      'razor',
-  'Hogar':                         'decor',
+  'Hogar':                         'home decor',
   'Cocina':                        'kitchen',
   'Electrodomésticos':             'appliance',
-  'Electrónica':                   'phone',
-  'Teléfonos y Accesorios':        'iphone',
+  'Electrónica':                   'electronics',
+  'Teléfonos y Accesorios':        'phone case',
   'Computación':                   'laptop',
-  'Energía e Iluminación':         'led',
+  'Energía e Iluminación':         'light',
   'Automóviles':                   'car',
-  'Piezas de Automóviles':         'auto parts',
+  'Piezas de Automóviles':         'auto part',
   'Motos':                         'motorcycle',
   'Bicicletas':                    'bicycle',
-  'Ferretería':                    'tools',
-  'Herramientas':                  'drill',
-  'Electricidad':                  'cable',
+  'Ferretería':                    'hardware',
+  'Herramientas':                  'tool',
+  'Electricidad':                  'electrical',
   'Plomería':                      'plumbing',
   'Pintura':                       'paint',
   'Agricultura y Jardinería':      'garden',
   'Deportes':                      'sports',
-  'Niños y Juguetes':              'toys',
-  'Material Escolar':              'notebook',
+  'Niños y Juguetes':              'toy',
+  'Material Escolar':              'stationery',
   'Oficina':                       'office',
   'Fotografía y Creación de Contenido': 'camera',
   'Productos para Negocios':       'business',
-  'Repuestos de Electrodomésticos':'parts',
-  'Reparación de Teléfonos':       'phone repair',
+  'Repuestos de Electrodomésticos':'appliance part',
+  'Reparación de Teléfonos':       'phone screen',
   'Mascotas':                      'pet',
   'Viajes':                        'luggage',
   'Fiestas y Eventos':             'party',
   'Costura':                       'sewing',
   'Manualidades':                  'craft',
-  'Seguridad':                     'camera',
+  'Seguridad':                     'security',
   'Limpieza':                      'cleaning',
   'Accesibilidad':                 'accessibility',
   'Regalos':                       'gift',
-  'Productos Profesionales':       'tools',
+  'Productos Profesionales':       'professional',
   'Energía Solar':                 'solar',
 };
 
@@ -107,10 +107,26 @@ async function searchByCategory(categoryLabel, config = {}) {
   // Convertir categoría a keywords
   const query = CATEGORY_KEYWORDS[categoryLabel] || categoryLabel;
 
+  // Construir filtros
+  const filters = [];
+  if (config.condition && config.condition !== 'any') {
+    filters.push('conditions:{' + config.condition + '}');
+  }
+  if (config.priceMin || config.priceMax) {
+    let priceFilter = 'price:[' + (config.priceMin || '') + '..' + (config.priceMax || '') + ']';
+    priceFilter += ',priceCurrency:USD';
+    filters.push(priceFilter);
+  }
+  if (config.buyingOptions) {
+    filters.push('buyingOptions:{' + config.buyingOptions + '}');
+  }
+
+  const filterParam = filters.length ? '&filter=' + filters.join(',') : '';
+
   const url = base + '/buy/browse/v1/item_summary/search?q=' +
     encodeURIComponent(query) +
-    '&limit=' + (config.limit || 10) +
-    '';
+    '&limit=' + (config.limit || 20) +
+    filterParam;
 
   const res = await fetch(url, {
     headers: {

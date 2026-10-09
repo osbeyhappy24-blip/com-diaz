@@ -53,7 +53,16 @@ export const SOURCES = {
       if (!appId || !certId) {
         throw new Error('eBay: faltan App ID y Cert ID. Configúralos en el Home.');
       }
-      return await ebaySearch(query, { environment, appId, certId, limit: 10 });
+      return await ebaySearch(query, {
+        environment,
+        appId,
+        certId,
+        limit: config?.limit || 20,
+        condition: config?.condition || 'NEW',
+        priceMin: config?.priceMin,
+        priceMax: config?.priceMax,
+        buyingOptions: config?.buyingOptions || 'FIXED_PRICE',
+      });
     },
   },
 
@@ -117,7 +126,7 @@ export const DEFAULT_SOURCE_STATE = {
   mercadolibre: { enabled: false, config: {} },
   amazon:       { enabled: false, config: { accessKey: '', secretKey: '', partnerTag: '' } },
   shein:        { enabled: false, config: { apiKey: '' } },
-  ebay:         { enabled: false, config: { environment: 'sandbox', appId: '', certId: '' } },
+  ebay:         { enabled: false, config: { environment: "production", appId: "", certId: "", limit: 20, condition: "NEW", buyingOptions: "FIXED_PRICE" } },
 };
 
 export function listSources() {

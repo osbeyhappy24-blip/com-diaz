@@ -804,7 +804,8 @@ function checkRateLimit(ip, path) {
 
 // Middleware rate limit (aplicado a endpoints públicos)
 app.addHook('onRequest', async (req, reply) => {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+  const ip = req.headers['cf-connecting-ip'] ||
+             req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
              req.headers['x-real-ip'] ||
              req.ip ||
              'desconocida';
@@ -833,7 +834,9 @@ setInterval(() => {
 // ═══════════════════════════════════════════════
 
 // GET público: catálogo de productos publicados
-app.get('/api/public/catalog', async (req) => {
+app.get('/api/public/catalog', async (req, reply) => {
+  reply.header('Cache-Control', 'no-store, no-cache, must-revalidate');
+  reply.header('Pragma', 'no-cache');
   const limit = Math.min(Number(req.query?.limit) || 200, state.shopConfig?.maxProductos || 200);
   const categoria = req.query?.categoria;
 

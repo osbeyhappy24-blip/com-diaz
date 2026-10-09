@@ -1000,6 +1000,19 @@ app.post('/api/manual/products/:id/sold', async (req, reply) => {
 
 const PORT = process.env.PORT || 3000;
 
+// Auto-búsqueda al arrancar si no hay productos
+async function autoSearchOnStart() {
+  try {
+    if (!state.results || state.results.length === 0) {
+      app.log.info('Sin productos al arrancar, buscando automaticamente...');
+      await runSearch('auto-start');
+      app.log.info('Auto-busqueda completada: ' + state.results.length + ' productos');
+    }
+  } catch (e) {
+    app.log.error('Error en auto-busqueda: ' + e.message);
+  }
+}
+
 app.listen({ port: PORT, host: '0.0.0.0' }, () => {
   console.log(BRAND);
   console.log(`Comdiaz backend en http://localhost:${PORT}`);
@@ -1008,4 +1021,5 @@ app.listen({ port: PORT, host: '0.0.0.0' }, () => {
   console.log(`Publicaciones: ${state.automation.publishTimes.join(' · ')}`);
   console.log(`Estado: ${state.automation.running ? 'ACTIVO' : 'EN PAUSA'}\n`);
   schedule();
+  setTimeout(autoSearchOnStart, 5000);
 });

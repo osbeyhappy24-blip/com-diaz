@@ -758,6 +758,77 @@ app.post('/api/telegram-test', async () => {
 
 
 // ═══════════════════════════════════════════════
+// RATE LIMITING (anti-scraping)
+// ═══════════════════════════════════════════════
+const rateLimitMap = new Map();
+const RATE_LIMITS = {
+  '/api/public/catalog': { max: 30, windowMs: 60000 },   // 30 req/min por IP
+  '/api/public/config':  { max: 60, windowMs: 60000 },   // 60 req/min por IP
+  '/api/public':         { max: 60, windowMs: 60000 },   // default para otros
+  '/api/auth':           { max: 10, windowMs: 60000 },   // 10 intentos/min
+};
+
+function checkRateLimit(ip, path) {
+  // Buscar la regla más específica
+  let rule = null;
+  for (const [k, r] of Object.entries(RATE_LIMITS)) {
+    if (path === k || path.startsWith(k)) {
+      if (!rule || k.length > (rule._key?.length || 0)) {
+        rule = { ...r, _key: k };
+      }
+    }
+  }
+  if (!rule) return { allowed: true };
+
+  const key = ip + ':' + rule._key;
+  const now = Date.now();
+  const entry = rateLimitMap.get(key) || { count: 0, resetAt: now + rule.windowMs };
+
+  if (now > entry.resetAt) {
+    entry.count = 0;
+    entry.resetAt = now + rule.windowMs;
+  }
+
+  entry.count++;
+  rateLimitMap.set(key, entry);
+
+  if (entry.count > rule.max) {
+    return {
+      allowed: false,
+      resetAt: entry.resetAt,
+      retryAfter: Math.ceil((entry.resetAt - now) / 1000),
+    };
+  }
+  return { allowed: true };
+}
+
+// Middleware rate limit (aplicado a endpoints públicos)
+app.addHook('onRequest', async (req, reply) => {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+             req.headers['x-real-ip'] ||
+             req.ip ||
+             'desconocida';
+
+  const r = checkRateLimit(ip, req.url.split('?')[0]);
+
+  if (!r.allowed) {
+    app.log.warn('Rate limit excedido: ' + ip + ' en ' + req.url);
+    reply.header('Retry-After', r.retryAfter);
+    reply.code(429);
+    reply.send({ ok: false, error: 'Demasiadas peticiones. Intenta en ' + r.retryAfter + 's.' });
+    return reply;
+  }
+});
+
+// Limpiar entradas viejas cada 5 min
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of rateLimitMap.entries()) {
+    if (now > v.resetAt + 300000) rateLimitMap.delete(k);
+  }
+}, 300000);
+
+// ═══════════════════════════════════════════════
 // COMDIAZ SHOP — Endpoints públicos
 // ═══════════════════════════════════════════════
 

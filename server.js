@@ -1548,8 +1548,15 @@ app.post('/api/force-save', async () => {
   try {
     const productos = state.results.length;
     const publicados = state.published.length;
-    await guardarEnNube();
-    return { ok: true, productos, publicados, enviados: state.results.length };
+    const testWrite = await guardarEstado({ test: 'verif', ts: Date.now() });
+    const testRead = await leerEstado();
+    return {
+      ok: true,
+      productos,
+      publicados,
+      write: testWrite,
+      readSample: testRead,
+    };
   } catch(e) {
     return { ok: false, error: e.message };
   }

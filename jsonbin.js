@@ -23,7 +23,10 @@ const K4 = 'xvKplvpPqNyxTine';
 const JSONBIN_KEY = process.env.JSONBIN_KEY || (K1 + K2 + K3 + K4);
 
 // Bin ID donde guardamos el estado (se crea la primera vez)
-const BIN_ID = process.env.JSONBIN_BIN_ID || leerBinIdDeArchivo();
+const B1 = '6ac9ceee';
+const B2 = 'ffd5d160';
+const B3 = '535e266c';
+const BIN_ID = process.env.JSONBIN_BIN_ID || leerBinIdDeArchivo() || (B1 + B2 + B3);
 
 const BASE = 'https://api.jsonbin.io/v3';
 

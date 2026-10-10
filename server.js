@@ -1361,7 +1361,11 @@ app.post('/api/track-visit', async (req, reply) => {
 
 // Endpoint para ver las estadísticas (con auth)
 app.get('/api/stats', async (req) => {
-  const v = state.visits || { total: 0, byDay: {}, byProduct: {} };
+  const v = state.visits || {};
+  if (!v.history) v.history = [];
+  if (!v.byDay) v.byDay = {};
+  if (!v.byProduct) v.byProduct = {};
+  if (typeof v.total !== 'number') v.total = 0;
   const hoy = new Date().toISOString().slice(0, 10);
 
   // Últimos 7 días

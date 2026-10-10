@@ -403,7 +403,13 @@ async function guardarEnNube() {
     fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2));
   } catch(e) {}
   if (isJSONBinConfigured()) {
-    await guardarEstado(state);
+    const result = await guardarEstado(state);
+    // Guardar el binId en archivo aparte para persistir entre reinicios
+    if (result && result.binId) {
+      try {
+        fs.writeFileSync(path.join(process.cwd(), 'bin_id.txt'), result.binId);
+      } catch(e) {}
+    }
   }
 }
 

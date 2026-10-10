@@ -1,6 +1,20 @@
 // comdiaz/backend/jsonbin.js
 // Persistencia en JSONBin.io (con credenciales ofuscadas)
 
+import fs from 'fs';
+import path from 'path';
+
+// Leer bin_id.txt si existe
+function leerBinIdDeArchivo() {
+  try {
+    const p = path.join(process.cwd(), 'bin_id.txt');
+    if (fs.existsSync(p)) {
+      return fs.readFileSync(p, 'utf8').trim();
+    }
+  } catch(e) {}
+  return null;
+}
+
 // API key ofuscada
 const K1 = '$2a$10$GeHpUOXc';
 const K2 = 'zEmy546Uhe793u6';
@@ -9,7 +23,7 @@ const K4 = 'xvKplvpPqNyxTine';
 const JSONBIN_KEY = process.env.JSONBIN_KEY || (K1 + K2 + K3 + K4);
 
 // Bin ID donde guardamos el estado (se crea la primera vez)
-const BIN_ID = process.env.JSONBIN_BIN_ID || null;
+const BIN_ID = process.env.JSONBIN_BIN_ID || leerBinIdDeArchivo();
 
 const BASE = 'https://api.jsonbin.io/v3';
 

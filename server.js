@@ -1558,23 +1558,33 @@ app.get('/api/orders', async () => ({
 
 
 app.post('/api/force-save', async () => {
+  const r = {};
   try {
-    const productos = state.results.length;
-    const publicados = state.published.length;
-    const testWrite = await guardarEstado({ test: 'verif', ts: Date.now() });
-    const testRead = await leerEstado();
-    return {
-      ok: true,
-      productos,
-      publicados,
-      write: testWrite,
-      readSample: testRead,
+    r.guardarDirecto = await guardarEstado({ test: 'diag', ts: Date.now() });
+    const esencia = {
+      margin: state.margin,
+      pin: state.pin,
+      categories: state.categories,
+      shopConfig: state.shopConfig,
+      automation: {
+        running: state.automation.running,
+        delaySeconds: state.automation.delaySeconds,
+        publishTimes: state.automation.publishTimes,
+      },
+      sources: state.sources,
+      published: (state.published || []).slice(0, 100),
+      productosManuales: state.productosManuales || [],
+      orders: (state.orders || []).slice(0, 20),
+      visits: state.visits,
     };
+    r.tamanoEsencia = JSON.stringify(esencia).length;
+    r.guardarEsencia = await guardarEstado(esencia);
+    r.leido = await leerEstado();
   } catch(e) {
-    return { ok: false, error: e.message };
+    r.error = e.message;
   }
+  return r;
 });
-
 const PORT = process.env.PORT || 3000;
 
 // Auto-búsqueda al arrancar si no hay productos

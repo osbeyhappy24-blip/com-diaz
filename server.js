@@ -605,17 +605,10 @@ app.get('/api/state', async () => state);
 
 app.post('/api/automation/play', async () => {
   const delay = state.automation.delaySeconds;
-  // Activa el estado INMEDIATAMENTE
   state.automation.running = true;
   await save();
-  app.log.info('Comdiaz · play activado, primera búsqueda en ' + delay + 's');
+  app.log.info('Comdiaz · play activado (sin busqueda inmediata)');
   logActivity('play', { delay });
-  // Solo la primera búsqueda se retrasa
-  setTimeout(() => {
-    if (state.automation.running) {
-      runSearch('arranque');
-    }
-  }, delay * 1000);
   return { ok: true, delay, running: true };
 });
 

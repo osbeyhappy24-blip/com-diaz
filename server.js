@@ -1447,19 +1447,16 @@ app.get('/api/stats', async (req) => {
 
 app.get('/api/debug-jsonbin', async () => {
   const configured = isJSONBinConfigured();
-  let testSave = null;
   let testRead = null;
   try {
-    testSave = await guardarEstado({ test: 'debug-' + Date.now(), ts: Date.now() });
     testRead = await leerEstado();
   } catch(e) {
-    testSave = { error: e.message };
     testRead = { error: e.message };
   }
   return {
     ok: true,
     configured,
-    save: testSave,
+    binId: '6ac9ceeeffd5d160535e266c',
     read: testRead,
   };
 });

@@ -131,6 +131,7 @@ const DEFAULTS = {
   margin: 35,
   pin: '985898',
   published: [],
+  featured: [], // IDs destacados
   visits: { total: 0, history: [], byDay: {}, byProduct: {} },
   productosManuales: [], // productos locales agregados manualmente // IDs publicados al catálogo público
   shopConfig: {
@@ -1014,9 +1015,15 @@ app.get('/api/public/catalog', async (req) => {
       .map(p => p.category || 'Local')
   ])].sort();
 
+  const featuredIds = state.featured || [];
+  const destacados = publicos.filter(p => featuredIds.includes(p.id));
+  const resto = publicos.filter(p => !featuredIds.includes(p.id));
+  const ordenados = [...destacados, ...resto];
+
   return {
     ok: true,
-    total: publicos.length,
+    total: ordenados.length,
+    featured: destacados,
     categorias,
     config: {
       titulo: state.shopConfig?.titulo || 'Comdiaz Shop',
@@ -1027,7 +1034,7 @@ app.get('/api/public/catalog', async (req) => {
       bannerTexto: state.shopConfig?.bannerTexto || '',
       bannerColor: state.shopConfig?.bannerColor || 'gradient',
     },
-    products: publicos,
+    products: ordenados,
   };
 });
 
@@ -1585,6 +1592,30 @@ app.post('/api/force-save', async () => {
   }
   return r;
 });
+
+// DESTACADOS
+app.post('/api/featured/toggle', async (req) => {
+  const id = String(req.body?.id || '').trim();
+  if (!id) return { ok: false, error: 'id requerido' };
+  state.featured = state.featured || [];
+  const idx = state.featured.indexOf(id);
+  if (idx === -1) {
+    state.featured.push(id);
+    logActivity('featured_add', { id });
+  } else {
+    state.featured.splice(idx, 1);
+    logActivity('featured_remove', { id });
+  }
+  await save();
+  return { ok: true, total: state.featured.length };
+});
+
+app.get('/api/featured', async () => ({
+  ok: true,
+  total: (state.featured || []).length,
+  ids: state.featured || [],
+}));
+
 const PORT = process.env.PORT || 3000;
 
 // Auto-búsqueda al arrancar si no hay productos

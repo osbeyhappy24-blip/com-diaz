@@ -136,9 +136,13 @@ const DEFAULTS = {
     whatsapp: '5351425691',
     titulo: 'Comdiaz Shop',
     subtitulo: 'Productos importados y locales',
+    horarioAtencion: 'Lun-Sab 9:00am - 9:00pm',
     publicarAutomatico: true,
     maxProductos: 200,
     mostrarPrecioBase: false,
+    bannerActivo: false,
+    bannerTexto: '',
+    bannerColor: 'gradient',
   },
   loginAttempts: {}, // IP -> { count, blockedUntil }
   activityLog: [], // ultimos eventos
@@ -1004,6 +1008,10 @@ app.get('/api/public/catalog', async (req) => {
       titulo: state.shopConfig?.titulo || 'Comdiaz Shop',
       subtitulo: state.shopConfig?.subtitulo || '',
       whatsapp: state.shopConfig?.whatsapp || '',
+      horarioAtencion: state.shopConfig?.horarioAtencion || 'Lun-Sab 9:00am - 9:00pm',
+      bannerActivo: state.shopConfig?.bannerActivo || false,
+      bannerTexto: state.shopConfig?.bannerTexto || '',
+      bannerColor: state.shopConfig?.bannerColor || 'gradient',
     },
     products: publicos,
   };
@@ -1085,7 +1093,11 @@ app.get('/api/public/config', async () => ({
     titulo: state.shopConfig?.titulo || 'Comdiaz Shop',
     subtitulo: state.shopConfig?.subtitulo || '',
     whatsapp: state.shopConfig?.whatsapp || '',
+    horarioAtencion: state.shopConfig?.horarioAtencion || 'Lun-Sab 9:00am - 9:00pm',
     maxProductos: state.shopConfig?.maxProductos || 200,
+    bannerActivo: state.shopConfig?.bannerActivo || false,
+    bannerTexto: state.shopConfig?.bannerTexto || '',
+    bannerColor: state.shopConfig?.bannerColor || 'gradient',
   },
 }));
 

@@ -47,6 +47,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/api/track-visit')) return;
   if (req.url.startsWith('/api/track-order')) return;
   if (req.url.startsWith('/api/debug-jsonbin')) return;
+  if (req.url.startsWith('/api/force-save')) return;
   if (req.url.startsWith('/api/public/')) return;
   if (req.url.startsWith('/ebay-notification')) return;
   if (req.url.startsWith('/api/pin/change')) return;
@@ -1541,6 +1542,18 @@ app.get('/api/orders', async () => ({
   total: (state.orders || []).length,
   orders: (state.orders || []).slice(0, 30),
 }));
+
+
+app.post('/api/force-save', async () => {
+  try {
+    const productos = state.results.length;
+    const publicados = state.published.length;
+    await guardarEnNube();
+    return { ok: true, productos, publicados, enviados: state.results.length };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+});
 
 const PORT = process.env.PORT || 3000;
 

@@ -45,6 +45,7 @@ app.addHook('onRequest', async (req, reply) => {
   // EXCEPCIÓN: /api/auth no requiere clave (es la que la valida)
   if (req.url.startsWith('/api/auth')) return;
   if (req.url.startsWith('/api/track-visit')) return;
+  if (req.url.startsWith('/api/track-order')) return;
   if (req.url.startsWith('/api/public/')) return;
   if (req.url.startsWith('/ebay-notification')) return;
   if (req.url.startsWith('/api/pin/change')) return;
@@ -1461,6 +1462,75 @@ app.get('/api/debug-jsonbin', async () => {
     read: testRead,
   };
 });
+
+
+// NOTIFICACION DE PEDIDOS
+app.post('/api/track-order', async (req, reply) => {
+  reply.header('Cache-Control', 'no-store');
+  try {
+    const body = req.body || {};
+    const nombre = String(body.nombre || 'Sin nombre').slice(0, 60);
+    const notas = String(body.notas || '').slice(0, 200);
+    const items = Array.isArray(body.items) ? body.items.slice(0, 50) : [];
+    const total = Number(body.total) || 0;
+    if (!items.length) {
+      reply.code(400);
+      return { ok: false, error: 'Sin productos' };
+    }
+    const lineas = [];
+    lineas.push('NUEVO PEDIDO - Comdiaz Shop');
+    lineas.push('');
+    lineas.push('Cliente: ' + nombre);
+    lineas.push('');
+    lineas.push('Productos:');
+    lineas.push('');
+    items.forEach((item, i) => {
+      const cantidad = Number(item.qty) || 1;
+      const precio = Number(item.price) || 0;
+      const subtotal = (cantidad * precio).toFixed(2);
+      lineas.push((i + 1) + '. ' + String(item.title || 'Producto').slice(0, 80));
+      lineas.push('   x' + cantidad + ' x ' + precio.toFixed(2) + ' = ' + subtotal);
+    });
+    lineas.push('');
+    lineas.push('TOTAL: ' + total.toFixed(2));
+    if (notas) {
+      lineas.push('');
+      lineas.push('Notas: ' + notas);
+    }
+    lineas.push('');
+    lineas.push(new Date().toLocaleString('es', { timeZone: 'America/Havana' }));
+    const mensaje = lineas.join(String.fromCharCode(10));
+    try {
+      await notifyTelegram(mensaje);
+      app.log.info('Notificacion de pedido enviada');
+    } catch(e) {
+      app.log.error('Error enviando pedido: ' + e.message);
+    }
+    logActivity('order', { nombre, items: items.length, total });
+    state.orders = state.orders || [];
+    state.orders.unshift({
+      id: Date.now(),
+      nombre,
+      notas,
+      items,
+      total,
+      createdAt: new Date().toISOString(),
+    });
+    if (state.orders.length > 100) state.orders.length = 100;
+    await save();
+    return { ok: true };
+  } catch (e) {
+    app.log.error('Error track-order: ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+app.get('/api/orders', async () => ({
+  ok: true,
+  total: (state.orders || []).length,
+  orders: (state.orders || []).slice(0, 30),
+}));
 
 const PORT = process.env.PORT || 3000;
 

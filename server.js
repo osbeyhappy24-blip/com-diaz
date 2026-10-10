@@ -1442,6 +1442,26 @@ app.get('/api/stats', async (req) => {
   };
 });
 
+
+app.get('/api/debug-jsonbin', async () => {
+  const configured = isJSONBinConfigured();
+  let testSave = null;
+  let testRead = null;
+  try {
+    testSave = await guardarEstado({ test: 'debug-' + Date.now(), ts: Date.now() });
+    testRead = await leerEstado();
+  } catch(e) {
+    testSave = { error: e.message };
+    testRead = { error: e.message };
+  }
+  return {
+    ok: true,
+    configured,
+    save: testSave,
+    read: testRead,
+  };
+});
+
 const PORT = process.env.PORT || 3000;
 
 // Auto-búsqueda al arrancar si no hay productos

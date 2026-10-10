@@ -46,6 +46,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/api/auth')) return;
   if (req.url.startsWith('/api/track-visit')) return;
   if (req.url.startsWith('/api/track-order')) return;
+  if (req.url.startsWith('/api/debug-jsonbin')) return;
   if (req.url.startsWith('/api/public/')) return;
   if (req.url.startsWith('/ebay-notification')) return;
   if (req.url.startsWith('/api/pin/change')) return;

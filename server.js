@@ -43,6 +43,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.method === 'OPTIONS') return;
   // EXCEPCIÓN: /api/auth no requiere clave (es la que la valida)
   if (req.url.startsWith('/api/auth')) return;
+  if (req.url.startsWith('/api/track-visit')) return;
   if (req.url.startsWith('/api/public/')) return;
   if (req.url.startsWith('/ebay-notification')) return;
   if (req.url.startsWith('/api/pin/change')) return;
@@ -126,6 +127,7 @@ const DEFAULTS = {
   margin: 35,
   pin: '985898',
   published: [],
+  visits: { total: 0, history: [], byDay: {}, byProduct: {} },
   productosManuales: [], // productos locales agregados manualmente // IDs publicados al catálogo público
   shopConfig: {
     whatsapp: '5351425691',
@@ -1271,6 +1273,131 @@ app.post('/api/upload-image', async (req, reply) => {
     reply.code(500);
     return { ok: false, error: e.message };
   }
+});
+
+
+// ═══════════════════════════════════════════════
+// CONTADOR DE VISITAS PROPIO
+// ═══════════════════════════════════════════════
+app.post('/api/track-visit', async (req, reply) => {
+  reply.header('Cache-Control', 'no-store');
+
+  try {
+    const ip = req.headers['cf-connecting-ip'] ||
+               req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+               req.ip || 'desconocida';
+    const ua = String(req.headers['user-agent'] || '').slice(0, 200);
+    const body = req.body || {};
+    const tipo = String(body.tipo || 'page'); // page, product, cart, whatsapp
+    const productId = body.productId ? String(body.productId).slice(0, 80) : null;
+    const productTitle = body.productTitle ? String(body.productTitle).slice(0, 120) : null;
+
+    // Inicializar
+    state.visits = state.visits || { total: 0, history: [], byDay: {}, byProduct: {} };
+    if (!state.visits.byDay) state.visits.byDay = {};
+    if (!state.visits.byProduct) state.visits.byProduct = {};
+    if (!Array.isArray(state.visits.history)) state.visits.history = [];
+
+    const ahora = new Date();
+    const dayKey = ahora.toISOString().slice(0, 10); // YYYY-MM-DD
+    const hourKey = ahora.getHours();
+
+    // Detectar dispositivo
+    let dispositivo = 'Desconocido';
+    if (/Android/i.test(ua)) dispositivo = 'Android';
+    else if (/iPhone|iPad|iPod/i.test(ua)) dispositivo = 'iOS';
+    else if (/Windows/i.test(ua)) dispositivo = 'Windows';
+    else if (/Mac/i.test(ua)) dispositivo = 'Mac';
+    else if (/Linux/i.test(ua)) dispositivo = 'Linux';
+
+    // Inicializar el día
+    if (!state.visits.byDay[dayKey]) {
+      state.visits.byDay[dayKey] = { visitas: 0, productos: 0, carrito: 0, whatsapp: 0, horas: {}, dispositivos: {} };
+    }
+    const dia = state.visits.byDay[dayKey];
+
+    // Contar según tipo
+    if (tipo === 'page') dia.visitas++;
+    else if (tipo === 'product') dia.productos++;
+    else if (tipo === 'cart') dia.carrito++;
+    else if (tipo === 'whatsapp') dia.whatsapp++;
+
+    // Horas
+    dia.horas[hourKey] = (dia.horas[hourKey] || 0) + 1;
+
+    // Dispositivos
+    dia.dispositivos[dispositivo] = (dia.dispositivos[dispositivo] || 0) + 1;
+
+    // Producto más visto
+    if (productId) {
+      if (!state.visits.byProduct[productId]) {
+        state.visits.byProduct[productId] = { title: productTitle || '', count: 0 };
+      }
+      state.visits.byProduct[productId].count++;
+    }
+
+    // Historial reciente (últimos 100)
+    state.visits.history.unshift({
+      ts: ahora.toISOString(),
+      tipo,
+      ip: ip.slice(0, 45),
+      dispositivo,
+      productId: productId || null,
+    });
+    if (state.visits.history.length > 100) state.visits.history.length = 100;
+
+    // Total
+    if (tipo === 'page') state.visits.total++;
+
+    // Guardar cada 10 visitas para no saturar (o siempre si es pocas)
+    if (state.visits.total % 5 === 0) await save();
+
+    return { ok: true };
+  } catch (e) {
+    app.log.error('Error track-visit: ' + e.message);
+    return { ok: false };
+  }
+});
+
+// Endpoint para ver las estadísticas (con auth)
+app.get('/api/stats', async (req) => {
+  const v = state.visits || { total: 0, byDay: {}, byProduct: {} };
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  // Últimos 7 días
+  const ultimos7 = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    ultimos7.push({
+      fecha: key,
+      visitas: v.byDay?.[key]?.visitas || 0,
+      productos: v.byDay?.[key]?.productos || 0,
+      carrito: v.byDay?.[key]?.carrito || 0,
+      whatsapp: v.byDay?.[key]?.whatsapp || 0,
+    });
+  }
+
+  // Top 10 productos
+  const topProductos = Object.entries(v.byProduct || {})
+    .map(([id, data]) => ({ id, title: data.title, count: data.count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  // Últimas 24 horas
+  const hace24h = Date.now() - 24 * 60 * 60 * 1000;
+  const recientes = (v.history || []).filter(h => new Date(h.ts).getTime() > hace24h);
+
+  return {
+    ok: true,
+    total: v.total || 0,
+    hoy: v.byDay?.[hoy] || { visitas: 0, productos: 0, carrito: 0, whatsapp: 0 },
+    ultimos7,
+    topProductos,
+    recientes: recientes.length,
+    historialReciente: (v.history || []).slice(0, 30),
+  };
 });
 
 const PORT = process.env.PORT || 3000;

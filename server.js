@@ -10,6 +10,7 @@ import crypto from 'crypto';
 import { SOURCES, DEFAULT_SOURCE_STATE, listSources } from './sources.js';
 import { notifyTelegram } from './telegram.js';
 import { subirImagen } from './imgbb.js';
+import { leerEstado, guardarEstado, isJSONBinConfigured } from './jsonbin.js';
 
 const BRAND = `
  ██████╗ ██████╗ ███╗   ███╗██████╗ ██╗ █████╗ ███████╗
@@ -148,7 +149,7 @@ const state = fs.existsSync(DB_FILE)
   ? { ...DEFAULTS, ...JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) }
   : structuredClone(DEFAULTS);
 
-const save = () => fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2));
+const save = async () => { await guardarEnNube(); };
 
 const adapters = {
   async searchFrom(sourceId, query, sourceState) {
@@ -373,6 +374,37 @@ function esContenidoBloqueado(producto) {
     if (titulo.includes(palabra)) return true;
   }
   return false;
+}
+
+
+// Cargar estado desde JSONBin (al arrancar)
+async function cargarDesdeNube() {
+  if (!isJSONBinConfigured()) {
+    console.log('[Comdiaz] JSONBin no configurado, usando data.json local');
+    return false;
+  }
+  try {
+    console.log('[Comdiaz] Cargando estado desde JSONBin...');
+    const remoto = await leerEstado();
+    if (remoto && typeof remoto === 'object') {
+      Object.assign(state, remoto);
+      console.log('[Comdiaz] Estado cargado desde JSONBin');
+      return true;
+    }
+    return false;
+  } catch (e) {
+    console.log('[Comdiaz] Error cargando desde JSONBin:', e.message);
+    return false;
+  }
+}
+
+async function guardarEnNube() {
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2));
+  } catch(e) {}
+  if (isJSONBinConfigured()) {
+    await guardarEstado(state);
+  }
 }
 
 async function runSearch(trigger = 'manual') {
@@ -1419,7 +1451,8 @@ async function autoSearchOnStart() {
   }
 }
 
-app.listen({ port: PORT, host: '0.0.0.0' }, () => {
+cargarDesdeNube().then(() => {
+  app.listen({ port: PORT, host: '0.0.0.0' }, () => {
   console.log(BRAND);
   console.log(`Comdiaz backend en http://localhost:${PORT}`);
   console.log(`Categorías activas: ${state.categories.length}`);
@@ -1428,4 +1461,5 @@ app.listen({ port: PORT, host: '0.0.0.0' }, () => {
   console.log(`Estado: ${state.automation.running ? 'ACTIVO' : 'EN PAUSA'}\n`);
   schedule();
   setTimeout(autoSearchOnStart, 5000);
+});
 });

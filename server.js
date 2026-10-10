@@ -386,36 +386,56 @@ function esContenidoBloqueado(producto) {
 
 // Cargar estado desde JSONBin (al arrancar)
 async function cargarDesdeNube() {
-  if (!isJSONBinConfigured()) {
-    console.log('[Comdiaz] JSONBin no configurado, usando data.json local');
-    return false;
-  }
+  if (!isJSONBinConfigured()) return false;
   try {
-    console.log('[Comdiaz] Cargando estado desde JSONBin...');
     const remoto = await leerEstado();
-    if (remoto && typeof remoto === 'object') {
-      Object.assign(state, remoto);
-      console.log('[Comdiaz] Estado cargado desde JSONBin');
+    if (remoto && typeof remoto === 'object' && Object.keys(remoto).length > 0) {
+      if (remoto.margin !== undefined) state.margin = remoto.margin;
+      if (remoto.pin !== undefined) state.pin = remoto.pin;
+      if (remoto.categories) state.categories = remoto.categories;
+      if (remoto.shopConfig) state.shopConfig = { ...state.shopConfig, ...remoto.shopConfig };
+      if (remoto.automation) state.automation = { ...state.automation, ...remoto.automation };
+      if (remoto.sources) state.sources = remoto.sources;
+      if (remoto.published) state.published = remoto.published;
+      if (remoto.productosManuales) state.productosManuales = remoto.productosManuales;
+      if (remoto.orders) state.orders = remoto.orders;
+      if (remoto.visits) state.visits = remoto.visits;
+      app.log.info("Config cargada desde JSONBin");
       return true;
     }
-    return false;
-  } catch (e) {
-    console.log('[Comdiaz] Error cargando desde JSONBin:', e.message);
-    return false;
+  } catch(e) {
+    app.log.error("Error cargando JSONBin: " + e.message);
   }
+  return false;
 }
 
 async function guardarEnNube() {
+  // Guardar completo en local
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2));
   } catch(e) {}
+
+  // En JSONBin guardar SOLO configuracion esencial
   if (isJSONBinConfigured()) {
-    const result = await guardarEstado(state);
-    // Guardar el binId en archivo aparte para persistir entre reinicios
+    const esencia = {
+      margin: state.margin,
+      pin: state.pin,
+      categories: state.categories,
+      shopConfig: state.shopConfig,
+      automation: {
+        running: state.automation.running,
+        delaySeconds: state.automation.delaySeconds,
+        publishTimes: state.automation.publishTimes,
+      },
+      sources: state.sources,
+      published: (state.published || []).slice(0, 2000),
+      productosManuales: state.productosManuales || [],
+      orders: (state.orders || []).slice(0, 50),
+      visits: state.visits,
+    };
+    const result = await guardarEstado(esencia);
     if (result && result.binId) {
-      try {
-        fs.writeFileSync(path.join(process.cwd(), 'bin_id.txt'), result.binId);
-      } catch(e) {}
+      try { fs.writeFileSync(path.join(process.cwd(), 'bin_id.txt'), result.binId); } catch(e) {}
     }
   }
 }

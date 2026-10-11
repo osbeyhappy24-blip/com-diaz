@@ -861,6 +861,9 @@ const RATE_LIMITS = {
   '/api/public/config':  { max: 60, windowMs: 60000 },   // 60 req/min por IP
   '/api/public':         { max: 60, windowMs: 60000 },   // default para otros
   '/api/auth':           { max: 10, windowMs: 60000 },   // 10 intentos/min
+  '/api/track-order': { max: 5, windowMs: 3600000 },   // 5 pedidos/hora por IP
+  '/api/track-visit': { max: 10, windowMs: 60000 },    // 10 visitas/min por IP
+  '/api/public/live-search': { max: 20, windowMs: 60000 }, // 20 busquedas/min por IP
 };
 
 function checkRateLimit(ip, path) {

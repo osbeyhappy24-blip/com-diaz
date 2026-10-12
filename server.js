@@ -11,6 +11,24 @@ import { SOURCES, DEFAULT_SOURCE_STATE, listSources } from './sources.js';
 import { notifyTelegram } from './telegram.js';
 import { subirImagen } from './imgbb.js';
 import { leerEstado, guardarEstado, isJSONBinConfigured } from './jsonbin.js';
+import webpush from 'web-push';
+
+// Cargar claves VAPID desde .vapid-keys.txt
+let VAPID_PUBLIC = '';
+let VAPID_PRIVATE = '';
+try {
+  const vapidRaw = fs.readFileSync(new URL('./.vapid-keys.txt', import.meta.url), 'utf8');
+  VAPID_PUBLIC = (vapidRaw.match(/PUBLIC_KEY=(.+)/) || [])[1]?.trim() || '';
+  VAPID_PRIVATE = (vapidRaw.match(/PRIVATE_KEY=(.+)/) || [])[1]?.trim() || '';
+  if (VAPID_PUBLIC && VAPID_PRIVATE) {
+    webpush.setVapidDetails('mailto:admin@comdiaz.com', VAPID_PUBLIC, VAPID_PRIVATE);
+    console.log('[VAPID] Web Push configurado OK');
+  } else {
+    console.warn('[VAPID] Claves no encontradas en .vapid-keys.txt');
+  }
+} catch (e) {
+  console.warn('[VAPID] Error cargando claves:', e.message);
+}
 
 const BRAND = `
  ██████╗ ██████╗ ███╗   ███╗██████╗ ██╗ █████╗ ███████╗
@@ -148,6 +166,7 @@ const DEFAULTS = {
   },
   loginAttempts: {}, // IP -> { count, blockedUntil }
   activityLog: [], // ultimos eventos
+  subscriptions: [], // Web Push: suscripciones vinculadas a pedidos
   categories: DEFAULT_CATEGORIES,
   results: [],
   sources: JSON.parse(JSON.stringify(DEFAULT_SOURCE_STATE)),
@@ -169,6 +188,44 @@ const adapters = {
   }
 };
 
+
+async function sendPushToOrder(orderId, titulo, mensaje) {
+  if (!VAPID_PUBLIC || !VAPID_PRIVATE) {
+    console.warn('[PUSH] VAPID no configurado');
+    return { ok: false, error: 'VAPID no configurado' };
+  }
+  const subs = (state.subscriptions || []).filter(s => String(s.orderId) === String(orderId));
+  if (!subs.length) {
+    console.log('[PUSH] Sin suscripciones para pedido', orderId);
+    return { ok: true, enviados: 0 };
+  }
+  let enviados = 0;
+  let eliminados = 0;
+  const payload = JSON.stringify({
+    title: titulo || 'Comdiaz Shop',
+    body: mensaje || 'Actualizacion de tu pedido',
+    icon: '/icon-shop-192.png',
+    badge: '/icon-shop-192.png',
+    orderId: orderId,
+    tag: 'order-' + orderId,
+    url: '/shop.html'
+  });
+  for (const sub of subs) {
+    try {
+      await webpush.sendNotification(sub.subscription, payload);
+      enviados++;
+    } catch (e) {
+      console.warn('[PUSH] Error enviando:', e.statusCode, e.message);
+      if (e.statusCode === 410 || e.statusCode === 404) {
+        state.subscriptions = state.subscriptions.filter(s => s !== sub);
+        eliminados++;
+      }
+    }
+  }
+  if (eliminados) await save();
+  console.log('[PUSH] Enviados:', enviados, 'Eliminados:', eliminados);
+  return { ok: true, enviados, eliminados };
+}
 
 function buildShareText(opts = {}) {
   const D = String.fromCharCode(36);
@@ -1624,7 +1681,68 @@ app.put('/api/orders/:id', async (req, reply) => {
   order.actualizado = new Date().toISOString();
   await save();
   logActivity('order_update', { id, estado: order.estado });
+
+  // Web Push automatico al cambiar estado
+  const PUSH_MSGS = {
+    pendiente_pago: 'Pedido ' + id + ' recibido. Esperando confirmacion de pago.',
+    pagado: 'Pago confirmado del pedido ' + id + '. Ya lo estamos preparando.',
+    en_transito: 'Pedido ' + id + ' en camino a Cuba. Tracking: ' + (order.tracking || 'pendiente'),
+    en_cuba: 'Pedido ' + id + ' llego a Cuba. Pronto lo recibiras.',
+    listo_recoger: 'Pedido ' + id + ' LISTO PARA RECOGER. Escribenos por WhatsApp.',
+    entregado: 'Pedido ' + id + ' entregado. Gracias por tu compra.',
+    cancelado: 'Pedido ' + id + ' cancelado. Escribenos si tienes dudas.'
+  };
+  if (body.estado && PUSH_MSGS[body.estado]) {
+    sendPushToOrder(id, 'Comdiaz Shop', PUSH_MSGS[body.estado]).catch(e =>
+      app.log.warn('Push error: ' + e.message)
+    );
+  }
+
   return { ok: true, order };
+});
+
+// ═══════════════════════════════════════════════
+// WEB PUSH - Suscripciones
+// ═══════════════════════════════════════════════
+
+app.get('/api/vapid-public-key', async () => ({
+  ok: true,
+  publicKey: VAPID_PUBLIC
+}));
+
+app.post('/api/subscribe', async (req, reply) => {
+  const body = req.body || {};
+  const orderId = String(body.orderId || '').trim();
+  const subscription = body.subscription;
+  if (!orderId || !subscription || !subscription.endpoint) {
+    reply.code(400);
+    return { ok: false, error: 'Faltan orderId o subscription' };
+  }
+  state.subscriptions = state.subscriptions || [];
+  // Eliminar suscripciones viejas de ese mismo orderId + endpoint
+  state.subscriptions = state.subscriptions.filter(s =>
+    !(String(s.orderId) === orderId && s.subscription?.endpoint === subscription.endpoint)
+  );
+  state.subscriptions.push({
+    orderId,
+    subscription,
+    createdAt: new Date().toISOString()
+  });
+  if (state.subscriptions.length > 1000) {
+    state.subscriptions = state.subscriptions.slice(-1000);
+  }
+  await save();
+  logActivity('push_subscribe', { orderId });
+  return { ok: true, total: state.subscriptions.length };
+});
+
+app.post('/api/unsubscribe', async (req, reply) => {
+  const body = req.body || {};
+  const endpoint = String(body.endpoint || '').trim();
+  if (!endpoint) { reply.code(400); return { ok: false, error: 'Falta endpoint' }; }
+  state.subscriptions = (state.subscriptions || []).filter(s => s.subscription?.endpoint !== endpoint);
+  await save();
+  return { ok: true };
 });
 
 app.get('/api/public/order/:id', async (req, reply) => {

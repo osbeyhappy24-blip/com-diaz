@@ -4,3 +4,5 @@ node_modules/
 .env
 data.json
 data.json.bak
+.vapid-keys.txt
+.env

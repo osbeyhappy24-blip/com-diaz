@@ -62,7 +62,7 @@ app.addHook('onRequest', async (req, reply) => {
   const origin = req.headers.origin || "";
   const allowed = ["https://com-diaz-web.onrender.com", "https://com-diaz.onrender.com", "http://com-diaz-web.onrender.com", "http://localhost:3000", "http://127.0.0.1:3000"];
   reply.header("Access-Control-Allow-Origin", allowed.includes(origin) ? origin : "https://com-diaz-web.onrender.com");
-  reply.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  reply.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   reply.header('Access-Control-Allow-Headers', 'Content-Type, X-Comdiaz-Key');
 });
 app.options('*', async (req, reply) => reply.code(204).send());

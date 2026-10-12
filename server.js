@@ -14,20 +14,23 @@ import { leerEstado, guardarEstado, isJSONBinConfigured } from './jsonbin.js';
 import webpush from 'web-push';
 
 // Cargar claves VAPID desde .vapid-keys.txt
-let VAPID_PUBLIC = '';
-let VAPID_PRIVATE = '';
-try {
-  const vapidRaw = fs.readFileSync(new URL('./.vapid-keys.txt', import.meta.url), 'utf8');
-  VAPID_PUBLIC = (vapidRaw.match(/PUBLIC_KEY=(.+)/) || [])[1]?.trim() || '';
-  VAPID_PRIVATE = (vapidRaw.match(/PRIVATE_KEY=(.+)/) || [])[1]?.trim() || '';
-  if (VAPID_PUBLIC && VAPID_PRIVATE) {
-    webpush.setVapidDetails('mailto:admin@comdiaz.com', VAPID_PUBLIC, VAPID_PRIVATE);
-    console.log('[VAPID] Web Push configurado OK');
-  } else {
-    console.warn('[VAPID] Claves no encontradas en .vapid-keys.txt');
+let VAPID_PUBLIC = process.env.VAPID_PUBLIC || '';
+let VAPID_PRIVATE = process.env.VAPID_PRIVATE || '';
+// Si no hay env vars, leer del archivo local (desarrollo)
+if (!VAPID_PUBLIC || !VAPID_PRIVATE) {
+  try {
+    const vapidRaw = fs.readFileSync(new URL('./.vapid-keys.txt', import.meta.url), 'utf8');
+    VAPID_PUBLIC = VAPID_PUBLIC || (vapidRaw.match(/PUBLIC_KEY=(.+)/) || [])[1]?.trim() || '';
+    VAPID_PRIVATE = VAPID_PRIVATE || (vapidRaw.match(/PRIVATE_KEY=(.+)/) || [])[1]?.trim() || '';
+  } catch (e) {
+    // Archivo no existe, es normal en produccion
   }
-} catch (e) {
-  console.warn('[VAPID] Error cargando claves:', e.message);
+}
+if (VAPID_PUBLIC && VAPID_PRIVATE) {
+  webpush.setVapidDetails('mailto:admin@comdiaz.com', VAPID_PUBLIC, VAPID_PRIVATE);
+  console.log('[VAPID] Web Push configurado OK (' + (process.env.VAPID_PUBLIC ? 'env' : 'file') + ')');
+} else {
+  console.warn('[VAPID] Sin claves - Web Push desactivado');
 }
 
 const BRAND = `

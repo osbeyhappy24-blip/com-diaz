@@ -197,11 +197,19 @@ async function sendPushToOrder(orderId, titulo, mensaje) {
     console.warn('[PUSH] VAPID no configurado');
     return { ok: false, error: 'VAPID no configurado' };
   }
-  const subs = (state.subscriptions || []).filter(s => String(s.orderId) === String(orderId));
+  // Buscar pedido para obtener whatsapp del cliente
+  const order = (state.orders || []).find(o => String(o.id) === String(orderId));
+  const whatsapp = order ? String(order.whatsapp || '').replace(/[^0-9]/g, '') : '';
+  // Filtrar por whatsapp (todos los pedidos) O por orderId (compatibilidad)
+  const subs = (state.subscriptions || []).filter(s =>
+    (whatsapp && String(s.whatsapp || '') === whatsapp) ||
+    String(s.orderId) === String(orderId)
+  );
   if (!subs.length) {
-    console.log('[PUSH] Sin suscripciones para pedido', orderId);
+    console.log('[PUSH] Sin suscripciones para pedido', orderId, 'whatsapp:', whatsapp);
     return { ok: true, enviados: 0 };
   }
+  console.log('[PUSH] Enviando a', subs.length, 'subs (whatsapp:', whatsapp + ')');
   let enviados = 0;
   let eliminados = 0;
   const payload = JSON.stringify({
@@ -1716,18 +1724,24 @@ app.get('/api/public/vapid-key', async () => ({
 app.post('/api/public/subscribe', async (req, reply) => {
   const body = req.body || {};
   const orderId = String(body.orderId || '').trim();
+  const whatsapp = String(body.whatsapp || '').replace(/[^0-9]/g, '');
   const subscription = body.subscription;
-  if (!orderId || !subscription || !subscription.endpoint) {
+  if (!subscription || !subscription.endpoint) {
     reply.code(400);
-    return { ok: false, error: 'Faltan orderId o subscription' };
+    return { ok: false, error: 'Falta subscription' };
+  }
+  if (!orderId && !whatsapp) {
+    reply.code(400);
+    return { ok: false, error: 'Falta orderId o whatsapp' };
   }
   state.subscriptions = state.subscriptions || [];
-  // Eliminar suscripciones viejas de ese mismo orderId + endpoint
+  // Eliminar suscripciones viejas del mismo endpoint
   state.subscriptions = state.subscriptions.filter(s =>
-    !(String(s.orderId) === orderId && s.subscription?.endpoint === subscription.endpoint)
+    s.subscription?.endpoint !== subscription.endpoint
   );
   state.subscriptions.push({
     orderId,
+    whatsapp,
     subscription,
     createdAt: new Date().toISOString()
   });
@@ -1735,7 +1749,7 @@ app.post('/api/public/subscribe', async (req, reply) => {
     state.subscriptions = state.subscriptions.slice(-1000);
   }
   await save();
-  logActivity('push_subscribe', { orderId });
+  logActivity('push_subscribe', { orderId, whatsapp: whatsapp ? '***' + whatsapp.slice(-4) : '' });
   return { ok: true, total: state.subscriptions.length };
 });
 

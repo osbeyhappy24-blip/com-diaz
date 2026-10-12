@@ -431,7 +431,7 @@ async function guardarEnNube() {
       sources: state.sources,
       published: (state.published || []).slice(0, 2000),
       productosManuales: state.productosManuales || [],
-      orders: (state.orders || []).slice(0, 50),
+      orders: (state.orders || []).slice(0, 200),
       visits: state.visits,
     };
     const result = await guardarEstado(esencia);
@@ -1499,6 +1499,17 @@ app.get('/api/debug-jsonbin', async () => {
 
 
 // NOTIFICACION DE PEDIDOS
+function generarOrderId(orders) {
+  const year = new Date().getFullYear();
+  const prefix = 'CD-' + year + '-';
+  const existentes = (orders || [])
+    .map(o => String(o.id || ''))
+    .filter(id => id.startsWith(prefix))
+    .map(id => parseInt(id.slice(prefix.length), 10) || 0);
+  const siguiente = existentes.length ? Math.max(...existentes) + 1 : 1;
+  return prefix + String(siguiente).padStart(4, '0');
+}
+
 app.post('/api/track-order', async (req, reply) => {
   reply.header('Cache-Control', 'no-store');
   try {
@@ -1542,17 +1553,30 @@ app.post('/api/track-order', async (req, reply) => {
     }
     logActivity('order', { nombre, items: items.length, total });
     state.orders = state.orders || [];
-    state.orders.unshift({
-      id: Date.now(),
+    const orderId = generarOrderId(state.orders);
+    const nuevaOrden = {
+      id: orderId,
       nombre,
+      whatsapp: String(body.whatsapp || '').slice(0, 20),
+      email: String(body.email || '').slice(0, 80),
+      direccion: String(body.direccion || '').slice(0, 200),
       notas,
       items,
       total,
+      estado: 'pendiente_pago',
+      agencia: '',
+      tracking: '',
+      notasInternas: '',
+      historial: [
+        { estado: 'pendiente_pago', fecha: new Date().toISOString(), nota: 'Pedido creado' }
+      ],
       createdAt: new Date().toISOString(),
-    });
-    if (state.orders.length > 100) state.orders.length = 100;
+      actualizado: new Date().toISOString(),
+    };
+    state.orders.unshift(nuevaOrden);
+    if (state.orders.length > 500) state.orders.length = 500;
     await save();
-    return { ok: true };
+    return { ok: true, orderId };
   } catch (e) {
     app.log.error('Error track-order: ' + e.message);
     reply.code(500);
@@ -1560,11 +1584,69 @@ app.post('/api/track-order', async (req, reply) => {
   }
 });
 
-app.get('/api/orders', async () => ({
-  ok: true,
-  total: (state.orders || []).length,
-  orders: (state.orders || []).slice(0, 30),
-}));
+// ═══════════════════════════════════════════════
+// GESTION DE PEDIDOS (admin + tracking publico)
+// ═══════════════════════════════════════════════
+
+app.get('/api/orders', async (req) => {
+  const estado = String(req.query?.estado || '').trim();
+  let list = state.orders || [];
+  if (estado) list = list.filter(o => o.estado === estado);
+  return { ok: true, total: list.length, orders: list };
+});
+
+app.get('/api/orders/:id', async (req, reply) => {
+  const id = String(req.params.id || '').trim();
+  const order = (state.orders || []).find(o => String(o.id) === id);
+  if (!order) { reply.code(404); return { ok: false, error: 'Pedido no encontrado' }; }
+  return { ok: true, order };
+});
+
+app.put('/api/orders/:id', async (req, reply) => {
+  const id = String(req.params.id || '').trim();
+  const idx = (state.orders || []).findIndex(o => String(o.id) === id);
+  if (idx === -1) { reply.code(404); return { ok: false, error: 'Pedido no encontrado' }; }
+  const body = req.body || {};
+  const order = state.orders[idx];
+  const estadosValidos = ['pendiente_pago','pagado','en_transito','en_cuba','listo_recoger','entregado','cancelado'];
+  if (body.estado && estadosValidos.includes(body.estado) && body.estado !== order.estado) {
+    order.historial = order.historial || [];
+    order.historial.push({
+      estado: body.estado,
+      fecha: new Date().toISOString(),
+      nota: String(body.notaEstado || '').slice(0, 200),
+    });
+    order.estado = body.estado;
+  }
+  if (typeof body.agencia === 'string') order.agencia = body.agencia.slice(0, 60);
+  if (typeof body.tracking === 'string') order.tracking = body.tracking.slice(0, 80);
+  if (typeof body.notasInternas === 'string') order.notasInternas = body.notasInternas.slice(0, 500);
+  order.actualizado = new Date().toISOString();
+  await save();
+  logActivity('order_update', { id, estado: order.estado });
+  return { ok: true, order };
+});
+
+app.get('/api/public/order/:id', async (req, reply) => {
+  const id = String(req.params.id || '').trim();
+  const order = (state.orders || []).find(o => String(o.id) === id);
+  if (!order) { reply.code(404); return { ok: false, error: 'Pedido no encontrado' }; }
+  return {
+    ok: true,
+    order: {
+      id: order.id,
+      nombre: order.nombre,
+      estado: order.estado,
+      agencia: order.agencia,
+      tracking: order.tracking,
+      historial: order.historial || [],
+      total: order.total,
+      createdAt: order.createdAt,
+      actualizado: order.actualizado,
+    }
+  };
+});
+
 
 
 app.post('/api/force-save', async () => {

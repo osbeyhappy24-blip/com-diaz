@@ -1705,12 +1705,12 @@ app.put('/api/orders/:id', async (req, reply) => {
 // WEB PUSH - Suscripciones
 // ═══════════════════════════════════════════════
 
-app.get('/api/vapid-public-key', async () => ({
+app.get('/api/public/vapid-key', async () => ({
   ok: true,
   publicKey: VAPID_PUBLIC
 }));
 
-app.post('/api/subscribe', async (req, reply) => {
+app.post('/api/public/subscribe', async (req, reply) => {
   const body = req.body || {};
   const orderId = String(body.orderId || '').trim();
   const subscription = body.subscription;
@@ -1736,7 +1736,7 @@ app.post('/api/subscribe', async (req, reply) => {
   return { ok: true, total: state.subscriptions.length };
 });
 
-app.post('/api/unsubscribe', async (req, reply) => {
+app.post('/api/public/unsubscribe', async (req, reply) => {
   const body = req.body || {};
   const endpoint = String(body.endpoint || '').trim();
   if (!endpoint) { reply.code(400); return { ok: false, error: 'Falta endpoint' }; }

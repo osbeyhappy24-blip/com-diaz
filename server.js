@@ -2014,6 +2014,95 @@ app.post('/api/import/run-now', async (req, reply) => {
   return { ok: true, source, imported: nuevosUnicos.length, errors };
 });
 
+// ═══════════════════════════════════════════════
+// LIVE SEARCH ALL - Multi-fuente (Temu, Amazon, Walmart)
+// ═══════════════════════════════════════════════
+
+app.get('/api/public/live-search-all', async (req, reply) => {
+  reply.header('Cache-Control', 'no-store');
+  const query = String(req.query?.q || '').trim();
+  if (!query || query.length < 2) {
+    reply.code(400);
+    return { ok: false, error: 'Escribe al menos 2 caracteres' };
+  }
+
+  // Rate limit: max 3 busquedas multi-fuente por minuto por IP
+  const ip = req.headers['cf-connecting-ip'] ||
+             req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+             req.ip || 'desconocida';
+  const key = ip + ':livesearch-all';
+  const ahora = Date.now();
+  const entry = rateLimitMap.get(key) || { count: 0, resetAt: ahora + 60000 };
+  if (ahora > entry.resetAt) {
+    entry.count = 0;
+    entry.resetAt = ahora + 60000;
+  }
+  entry.count++;
+  rateLimitMap.set(key, entry);
+
+  if (entry.count > 3) {
+    reply.code(429);
+    return { ok: false, error: 'Demasiadas busquedas. Espera 1 minuto.' };
+  }
+
+  if (!isApifyReady()) {
+    reply.code(503);
+    return { ok: false, error: 'Apify no configurado' };
+  }
+
+  const margenActual = Number(state.margin) || 35;
+  const fuentes = ['temu', 'amazon', 'walmart'];
+
+  // Buscar en paralelo con timeout individual
+  const promesas = fuentes.map(async (src) => {
+    try {
+      const timeoutPromise = new Promise((_, rej) =>
+        setTimeout(() => rej(new Error('Timeout')), 25000)
+      );
+      const searchPromise = searchSource(src, query, 10);
+      const productos = await Promise.race([searchPromise, timeoutPromise]);
+      return { source: src, productos: productos || [], error: null };
+    } catch (e) {
+      return { source: src, productos: [], error: e.message };
+    }
+  });
+
+  const resultados = await Promise.all(promesas);
+
+  // Aplanar todos los productos
+  const todos = [];
+  const errores = [];
+  for (const r of resultados) {
+    if (r.error) {
+      errores.push({ source: r.source, error: r.error });
+    } else {
+      todos.push(...r.productos);
+    }
+  }
+
+  // Formatear con margen y campos para la Shop
+  const productos = todos.map(p => ({
+    id: 'live-' + p.source + '-' + (p.id || Date.now()) + '-' + Math.random().toString(36).slice(2, 6),
+    title: p.title,
+    image: p.image,
+    images: p.images || [p.image],
+    salePrice: +(Number(p.priceBase) * (1 + margenActual / 100)).toFixed(2),
+    category: p.category || 'Importado',
+    source: p.source,
+    url: p.url
+  }));
+
+  app.log.info('[LIVE-ALL] ' + query + ' -> ' + productos.length + ' resultados de ' + fuentes.length + ' fuentes');
+
+  return {
+    ok: true,
+    query,
+    total: productos.length,
+    products: productos,
+    errors: errores.length ? errores : undefined
+  };
+});
+
 app.get('/api/public/vapid-key', async () => ({
   ok: true,
   publicKey: VAPID_PUBLIC

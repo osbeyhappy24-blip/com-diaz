@@ -1784,8 +1784,8 @@ app.post('/api/temu/search', async (req, reply) => {
   }
   try {
     app.log.info('[TEMU] Buscando: ' + keyword);
-    const run = await apifyClient.actor('goat255/temu-products-scraper').call({
-      searchQuery: keyword,
+    const run = await apifyClient.actor('amit123/temu-products-scraper').call({
+      searchQueries: [keyword],
       maxResults: maxResults,
       proxyConfig: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] }
     }, { timeout: 180 });

@@ -216,7 +216,7 @@ const DEFAULTS = {
     subtitulo: 'Productos importados y locales',
     horarioAtencion: 'Lun-Sab 9:00am - 9:00pm',
     publicarAutomatico: true,
-    maxProductos: 200,
+    maxProductos: 500,
     mostrarPrecioBase: false,
     bannerActivo: false,
     bannerTexto: '',
@@ -535,6 +535,13 @@ async function cargarDesdeNube() {
       if (remoto.orders) state.orders = remoto.orders;
       if (remoto.subscriptions) state.subscriptions = remoto.subscriptions;
       if (remoto.importConfig) state.importConfig = remoto.importConfig;
+      if (remoto.results && Array.isArray(remoto.results) && remoto.results.length > 0) {
+        // Solo recuperar si no tenemos resultados locales (evita perder los frescos)
+        if (!state.results || state.results.length === 0) {
+          state.results = remoto.results;
+          app.log.info('Recuperados ' + remoto.results.length + ' productos eBay de JSONBin');
+        }
+      }
       if (remoto.visits) state.visits = remoto.visits;
       app.log.info("Config cargada desde JSONBin");
       return true;
@@ -565,11 +572,43 @@ async function guardarEnNube() {
       },
       sources: state.sources,
       published: (state.published || []).slice(0, 2000),
-      productosManuales: state.productosManuales || [],
+      // Guardar solo los ultimos 100 productos eBay (publicados) para recuperar tras reinicio
+      results: (state.results || [])
+        .filter(r => (state.published || []).includes(r.id))
+        .slice(0, 100)
+        .map(r => ({
+          id: r.id,
+          title: (r.title || '').slice(0, 120),
+          image: r.image,
+          salePrice: r.salePrice,
+          category: r.category,
+          source: r.source,
+          url: r.url
+        })),
+      productosManuales: (state.productosManuales || []).slice(0, 300).map(p => ({
+        id: p.id,
+        title: (p.title || '').slice(0, 150),
+        image: p.image,
+        images: p.images ? p.images.slice(0, 1) : [],
+        category: p.category,
+        priceBase: p.priceBase,
+        salePrice: p.salePrice,
+        margenPct: p.margenPct,
+        cantidad: p.cantidad,
+        publicado: p.publicado,
+        source: p.source,
+        sourceUrl: p.sourceUrl,
+        createdAt: p.createdAt
+      })),
       orders: (state.orders || []).slice(0, 200),
       subscriptions: (state.subscriptions || []).slice(-500),
       importConfig: state.importConfig,
-      visits: state.visits,
+      visits: {
+        total: state.visits?.total || 0,
+        history: (state.visits?.history || []).slice(-50),
+        byDay: state.visits?.byDay || {},
+        byProduct: state.visits?.byProduct || {}
+      },
     };
     const result = await guardarEstado(esencia);
     if (result && result.binId) {

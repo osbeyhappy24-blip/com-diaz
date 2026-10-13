@@ -495,6 +495,7 @@ async function cargarDesdeNube() {
       if (remoto.published) state.published = remoto.published;
       if (remoto.productosManuales) state.productosManuales = remoto.productosManuales;
       if (remoto.orders) state.orders = remoto.orders;
+      if (remoto.subscriptions) state.subscriptions = remoto.subscriptions;
       if (remoto.visits) state.visits = remoto.visits;
       app.log.info("Config cargada desde JSONBin");
       return true;
@@ -527,6 +528,7 @@ async function guardarEnNube() {
       published: (state.published || []).slice(0, 2000),
       productosManuales: state.productosManuales || [],
       orders: (state.orders || []).slice(0, 200),
+      subscriptions: (state.subscriptions || []).slice(-500),
       visits: state.visits,
     };
     const result = await guardarEstado(esencia);
@@ -1829,6 +1831,7 @@ app.post('/api/force-save', async () => {
       published: (state.published || []).slice(0, 100),
       productosManuales: state.productosManuales || [],
       orders: (state.orders || []).slice(0, 20),
+      subscriptions: (state.subscriptions || []).slice(-50),
       visits: state.visits,
     };
     r.tamanoEsencia = JSON.stringify(esencia).length;

@@ -158,6 +158,7 @@ const DEFAULT_CATEGORIES = [
 
   // ═══ ENERGÍA - CRÍTICO EN CUBA ═══
   { label: '☀️ Paneles Solares e Inversores',   dummyjson: ['solar-panel', 'solar-generator', 'power-inverter', 'solar-charger'] },
+  { label: '⚡ Ecoflow y Estaciones Portátiles', dummyjson: ['ecoflow', 'portable-power-station', 'solar-generator', 'power-station', 'jackery', 'bluetti'] },
   { label: '🔋 Baterías y Cargadores',          dummyjson: ['power-bank', 'battery-charger', 'car-battery', 'rechargeable-battery'] },
   { label: '💡 Iluminación LED',                dummyjson: ['led-lights', 'solar-lights', 'flashlight', 'led-bulbs'] },
   { label: '⚡ Energía y Electricidad',         dummyjson: ['electrical-tools', 'cables', 'extension-cord', 'voltage-regulator'] },

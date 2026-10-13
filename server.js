@@ -2150,6 +2150,34 @@ app.post('/api/public/unsubscribe', async (req, reply) => {
   return { ok: true };
 });
 
+// ═══════════════════════════════════════════════
+// DELETE de pedido (solo admin)
+// ═══════════════════════════════════════════════
+
+app.delete('/api/orders/:id', async (req, reply) => {
+  const id = String(req.params.id || '').trim();
+  const idx = (state.orders || []).findIndex(o => String(o.id) === id);
+  if (idx === -1) { reply.code(404); return { ok: false, error: 'Pedido no encontrado' }; }
+  const eliminado = state.orders[idx];
+  state.orders.splice(idx, 1);
+  await save();
+  logActivity('order_delete', { id, total: eliminado.total });
+  return { ok: true, deleted: id };
+});
+
+// ═══════════════════════════════════════════════
+// Eliminar TODOS los pedidos entregados/cancelados (limpieza)
+// ═══════════════════════════════════════════════
+
+app.post('/api/orders/clean-old', async (req) => {
+  const antes = (state.orders || []).length;
+  state.orders = (state.orders || []).filter(o => o.estado !== 'entregado' && o.estado !== 'cancelado');
+  const despues = state.orders.length;
+  await save();
+  logActivity('order_clean', { eliminados: antes - despues });
+  return { ok: true, eliminados: antes - despues, total: despues };
+});
+
 app.get('/api/public/order/:id', async (req, reply) => {
   const id = String(req.params.id || '').trim();
   const order = (state.orders || []).find(o => String(o.id) === id);

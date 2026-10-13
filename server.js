@@ -231,6 +231,9 @@ const DEFAULTS = {
   loginAttempts: {}, // IP -> { count, blockedUntil }
   activityLog: [], // ultimos eventos
   subscriptions: [], // Web Push: suscripciones vinculadas a pedidos
+  tesoreria: {
+    movimientos: []  // lista de ingresos/egresos
+  },
   importConfig: {
     autoImport: {
       enabled: false,
@@ -265,6 +268,17 @@ const adapters = {
   }
 };
 
+
+function generarTxId(movimientos) {
+  const year = new Date().getFullYear();
+  const prefix = 'TX-' + year + '-';
+  const existentes = (movimientos || [])
+    .map(m => String(m.id || ''))
+    .filter(id => id.startsWith(prefix))
+    .map(id => parseInt(id.slice(prefix.length), 10) || 0);
+  const siguiente = existentes.length ? Math.max(...existentes) + 1 : 1;
+  return prefix + String(siguiente).padStart(4, '0');
+}
 
 async function sendPushToOrder(orderId, titulo, mensaje) {
   if (!VAPID_PUBLIC || !VAPID_PRIVATE) {
@@ -544,6 +558,10 @@ async function cargarDesdeNube() {
       if (remoto.orders) state.orders = remoto.orders;
       if (remoto.subscriptions) state.subscriptions = remoto.subscriptions;
       if (remoto.importConfig) state.importConfig = remoto.importConfig;
+      if (remoto.tesoreria && remoto.tesoreria.movimientos) {
+        state.tesoreria = state.tesoreria || { movimientos: [] };
+        state.tesoreria.movimientos = remoto.tesoreria.movimientos;
+      }
       if (remoto.results && Array.isArray(remoto.results) && remoto.results.length > 0) {
         // Solo recuperar si no tenemos resultados locales (evita perder los frescos)
         if (!state.results || state.results.length === 0) {
@@ -611,6 +629,9 @@ async function guardarEnNube() {
       })),
       orders: (state.orders || []).slice(0, 200),
       subscriptions: (state.subscriptions || []).slice(-500),
+      tesoreria: {
+        movimientos: (state.tesoreria?.movimientos || []).slice(-500)
+      },
       importConfig: state.importConfig,
       visits: {
         total: state.visits?.total || 0,
@@ -1878,6 +1899,47 @@ app.put('/api/orders/:id', async (req, reply) => {
   if (typeof body.tracking === 'string') order.tracking = body.tracking.slice(0, 80);
   if (typeof body.notasInternas === 'string') order.notasInternas = body.notasInternas.slice(0, 500);
   order.actualizado = new Date().toISOString();
+
+  // ─── TESORERIA: auto-ingreso cuando el pedido pasa a 'pagado' ───
+  if (body.estado === 'pagado' && (!order._txIngreso)) {
+    state.tesoreria = state.tesoreria || { movimientos: [] };
+    const txId = generarTxId(state.tesoreria.movimientos);
+    state.tesoreria.movimientos.unshift({
+      id: txId,
+      tipo: 'ingreso',
+      categoria: 'venta',
+      monto: Number(order.total) || 0,
+      moneda: 'USD',
+      descripcion: 'Venta pedido ' + id + ' (' + (order.nombre || '') + ')',
+      orderId: id,
+      fecha: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      createdBy: 'auto'
+    });
+    order._txIngreso = txId;
+    logActivity('tesoreria_auto', { txId, orderId: id, monto: order.total });
+  }
+
+  // ─── Si se cancela un pedido que ya tenía ingreso → egreso reverso ───
+  if (body.estado === 'cancelado' && order._txIngreso && !order._txReverso) {
+    state.tesoreria = state.tesoreria || { movimientos: [] };
+    const txId = generarTxId(state.tesoreria.movimientos);
+    state.tesoreria.movimientos.unshift({
+      id: txId,
+      tipo: 'egreso',
+      categoria: 'cancelacion',
+      monto: Number(order.total) || 0,
+      moneda: 'USD',
+      descripcion: 'Cancelacion pedido ' + id + ' (reverso ' + order._txIngreso + ')',
+      orderId: id,
+      fecha: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      createdBy: 'auto'
+    });
+    order._txReverso = txId;
+    logActivity('tesoreria_reverso', { txId, orderId: id });
+  }
+
   await save();
   logActivity('order_update', { id, estado: order.estado });
 
@@ -2044,6 +2106,113 @@ app.post('/api/import/run-now', async (req, reply) => {
 // ═══════════════════════════════════════════════
 // LIVE SEARCH ALL - Multi-fuente (Temu, Amazon, Walmart)
 // ═══════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════
+// TESORERIA - Movimientos e ingresos/egresos
+// ═══════════════════════════════════════════════
+
+app.get('/api/tesoreria/movimientos', async (req) => {
+  const tipo = String(req.query?.tipo || '').trim();
+  const categoria = String(req.query?.categoria || '').trim();
+  const desde = String(req.query?.desde || '').trim();
+  const hasta = String(req.query?.hasta || '').trim();
+  let list = (state.tesoreria?.movimientos || []).slice();
+  if (tipo) list = list.filter(m => m.tipo === tipo);
+  if (categoria) list = list.filter(m => m.categoria === categoria);
+  if (desde) list = list.filter(m => (m.fecha || m.createdAt) >= desde);
+  if (hasta) list = list.filter(m => (m.fecha || m.createdAt) <= hasta + 'T23:59:59');
+  list.sort((a, b) => (b.fecha || b.createdAt || '').localeCompare(a.fecha || a.createdAt || ''));
+  return { ok: true, total: list.length, movimientos: list };
+});
+
+app.post('/api/tesoreria/movimientos', async (req, reply) => {
+  const body = req.body || {};
+  const tipo = String(body.tipo || '').trim();
+  const categoria = String(body.categoria || 'otro').trim();
+  const monto = Number(body.monto);
+  const descripcion = String(body.descripcion || '').slice(0, 200);
+  const fecha = body.fecha ? String(body.fecha) : new Date().toISOString();
+
+  if (!['ingreso', 'egreso'].includes(tipo)) {
+    reply.code(400); return { ok: false, error: 'tipo debe ser ingreso o egreso' };
+  }
+  if (!monto || monto <= 0) {
+    reply.code(400); return { ok: false, error: 'monto debe ser mayor a 0' };
+  }
+
+  state.tesoreria = state.tesoreria || { movimientos: [] };
+  const id = generarTxId(state.tesoreria.movimientos);
+  const mov = {
+    id, tipo, categoria, monto,
+    moneda: 'USD',
+    descripcion,
+    orderId: body.orderId || null,
+    fecha,
+    createdAt: new Date().toISOString(),
+    createdBy: 'manual'
+  };
+  state.tesoreria.movimientos.unshift(mov);
+  if (state.tesoreria.movimientos.length > 1000) {
+    state.tesoreria.movimientos = state.tesoreria.movimientos.slice(0, 1000);
+  }
+  await save();
+  logActivity('tesoreria_add', { id, tipo, monto });
+  return { ok: true, movimiento: mov };
+});
+
+app.delete('/api/tesoreria/movimientos/:id', async (req, reply) => {
+  const id = String(req.params.id || '').trim();
+  const idx = (state.tesoreria?.movimientos || []).findIndex(m => String(m.id) === id);
+  if (idx === -1) { reply.code(404); return { ok: false, error: 'Movimiento no encontrado' }; }
+  const mov = state.tesoreria.movimientos[idx];
+  state.tesoreria.movimientos.splice(idx, 1);
+  await save();
+  logActivity('tesoreria_delete', { id, monto: mov.monto });
+  return { ok: true, deleted: id };
+});
+
+app.get('/api/tesoreria/stats', async (req) => {
+  const list = state.tesoreria?.movimientos || [];
+  const now = new Date();
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  const hoyInicio = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+  const semanaInicio = new Date(now.getTime() - 7 * dayMs).toISOString();
+  const quincenaInicio = new Date(now.getTime() - 15 * dayMs).toISOString();
+  const mesInicio = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const anoInicio = new Date(now.getFullYear(), 0, 1).toISOString();
+
+  function calc(desdeISO) {
+    const filtrados = list.filter(m => (m.fecha || m.createdAt) >= desdeISO);
+    const ingresos = filtrados.filter(m => m.tipo === 'ingreso').reduce((s, m) => s + Number(m.monto || 0), 0);
+    const egresos = filtrados.filter(m => m.tipo === 'egreso').reduce((s, m) => s + Number(m.monto || 0), 0);
+    return {
+      ingresos: +ingresos.toFixed(2),
+      egresos: +egresos.toFixed(2),
+      ganancia: +(ingresos - egresos).toFixed(2),
+      movimientos: filtrados.length
+    };
+  }
+
+  const totalIngresos = list.filter(m => m.tipo === 'ingreso').reduce((s, m) => s + Number(m.monto || 0), 0);
+  const totalEgresos = list.filter(m => m.tipo === 'egreso').reduce((s, m) => s + Number(m.monto || 0), 0);
+
+  return {
+    ok: true,
+    balance: +(totalIngresos - totalEgresos).toFixed(2),
+    hoy: calc(hoyInicio),
+    semana: calc(semanaInicio),
+    quincena: calc(quincenaInicio),
+    mes: calc(mesInicio),
+    ano: calc(anoInicio),
+    total: {
+      ingresos: +totalIngresos.toFixed(2),
+      egresos: +totalEgresos.toFixed(2),
+      ganancia: +(totalIngresos - totalEgresos).toFixed(2),
+      movimientos: list.length
+    }
+  };
+});
 
 app.get('/api/public/live-search-all', async (req, reply) => {
   reply.header('Cache-Control', 'no-store');

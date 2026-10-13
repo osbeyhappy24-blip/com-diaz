@@ -872,6 +872,26 @@ app.post('/api/margin', async (req) => {
   return { ok: true, margin: state.margin };
 });
 
+app.post('/api/categories/reset', async (req) => {
+  const body = req.body || {};
+  const confirmar = body.confirm === 'RESET';
+  if (!confirmar) {
+    return { ok: false, error: 'Envia { confirm: "RESET" } para confirmar' };
+  }
+  const antes = (state.categories || []).length;
+  state.categories = JSON.parse(JSON.stringify(DEFAULT_CATEGORIES));
+  const despues = state.categories.length;
+  await save();
+  logActivity('categories_reset', { antes, despues });
+  return {
+    ok: true,
+    mensaje: 'Categorias reseteadas a las nuevas',
+    antes,
+    despues,
+    categorias: state.categories.map(c => c.label)
+  };
+});
+
 app.post('/api/categories/add', async (req) => {
   const label = String(req.body?.label || req.body?.category || '').trim();
   if (!label) return { ok: false, error: 'label requerido' };

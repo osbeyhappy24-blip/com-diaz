@@ -228,10 +228,13 @@ const DEFAULTS = {
   importConfig: {
     autoImport: {
       enabled: false,
+      limitPerCategory: 5,     // productos max por categoria x fuente
+      margin: 40,               // margen global (%)
+      categories: [],           // labels de categorias a importar (vacio = todas)
       sources: {
-        temu:    { enabled: false, keywords: [], limit: 20, margin: 40 },
-        amazon:  { enabled: false, keywords: [], limit: 20, margin: 40 },
-        walmart: { enabled: false, keywords: [], limit: 20, margin: 40 }
+        temu:    { enabled: true },
+        amazon:  { enabled: true },
+        walmart: { enabled: false }
       }
     }
   },
@@ -766,29 +769,51 @@ function schedule() {
       app.log.warn('Cron disparó pero automatización en pausa.');
       return;
     }
-    // Auto-import de fuentes externas (antes de la busqueda normal)
+    // Auto-import unificado: usa las mismas categorias que eBay
     try {
       const cfg = state.importConfig?.autoImport;
       if (cfg && cfg.enabled) {
-        app.log.info('Ejecutando auto-import de fuentes externas...');
-        for (const [sourceId, srcCfg] of Object.entries(cfg.sources || {})) {
-          if (!srcCfg.enabled || !srcCfg.keywords?.length) continue;
-          const imported = [];
-          for (const kw of srcCfg.keywords) {
-            try {
-              const productos = await searchSource(sourceId, kw, srcCfg.limit || 20);
-              imported.push(...buildProductsForShop(productos, srcCfg.margin || 40));
-            } catch(e) {
-              app.log.error('  auto-import err [' + sourceId + '/' + kw + ']: ' + e.message);
+        app.log.info('Ejecutando auto-import multi-fuente desde categorias...');
+        const limitPerCat = Number(cfg.limitPerCategory) || 5;
+        const marginPct = Number(cfg.margin) || 40;
+        const catsFiltro = Array.isArray(cfg.categories) && cfg.categories.length
+          ? cfg.categories
+          : state.categories.map(c => c.label);
+        const fuentesActivas = Object.entries(cfg.sources || {})
+          .filter(([_, v]) => v && v.enabled)
+          .map(([k]) => k);
+
+        if (!fuentesActivas.length) {
+          app.log.warn('  Auto-import: sin fuentes activas');
+        } else {
+          for (const cat of state.categories) {
+            if (!catsFiltro.includes(cat.label)) continue;
+            const queries = (cat.dummyjson && cat.dummyjson.length) ? cat.dummyjson : [];
+            if (!queries.length) continue;
+
+            for (const sourceId of fuentesActivas) {
+              const imported = [];
+              for (const q of queries) {
+                try {
+                  const productos = await searchSource(sourceId, q, limitPerCat);
+                  imported.push(...buildProductsForShop(productos.slice(0, limitPerCat), marginPct));
+                } catch(e) {
+                  app.log.error('  auto-import err [' + cat.label + ' / ' + sourceId + ' / ' + q + ']: ' + e.message);
+                }
+              }
+              if (imported.length) {
+                state.productosManuales = state.productosManuales || [];
+                const ids = new Set(state.productosManuales.map(p => p.id));
+                const nuevos = imported.filter(p => !ids.has(p.id));
+                if (nuevos.length) {
+                  state.productosManuales = [...nuevos, ...state.productosManuales].slice(0, 500);
+                  app.log.info('  ' + cat.label + ' / ' + sourceId + ': ' + nuevos.length + ' nuevos');
+                }
+              }
             }
           }
-          if (imported.length) {
-            state.productosManuales = state.productosManuales || [];
-            const ids = new Set(state.productosManuales.map(p => p.id));
-            const nuevos = imported.filter(p => !ids.has(p.id));
-            state.productosManuales = [...nuevos, ...state.productosManuales].slice(0, 500);
-            app.log.info('  ' + sourceId + ': ' + nuevos.length + ' productos importados');
-          }
+          // Publicar todo lo importado
+          for (const p of state.productosManuales) p.publicado = true;
         }
       }
     } catch(e) {
@@ -1918,7 +1943,15 @@ app.post('/api/import/config', async (req) => {
   const body = req.body || {};
   if (body.autoImport) {
     state.importConfig = state.importConfig || {};
-    state.importConfig.autoImport = { ...(state.importConfig.autoImport || {}), ...body.autoImport };
+    const current = state.importConfig.autoImport || {};
+    state.importConfig.autoImport = {
+      ...current,
+      ...body.autoImport,
+      // Asegurar estructura correcta de sources
+      sources: body.autoImport.sources
+        ? { ...(current.sources || {}), ...body.autoImport.sources }
+        : current.sources
+    };
   }
   await save();
   logActivity('import_config', { enabled: state.importConfig?.autoImport?.enabled });

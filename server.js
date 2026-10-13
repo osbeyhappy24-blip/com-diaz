@@ -85,6 +85,33 @@ app.addHook('onRequest', async (req, reply) => {
   reply.header("Access-Control-Allow-Origin", allowed.includes(origin) ? origin : "https://com-diaz-web.onrender.com");
   reply.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   reply.header('Access-Control-Allow-Headers', 'Content-Type, X-Comdiaz-Key');
+  reply.header('Access-Control-Max-Age', '86400');
+
+  // ─── Headers de seguridad ───
+  // Bloquea XSS, clickjacking, MIME sniffing, etc.
+  reply.header('X-Frame-Options', 'SAMEORIGIN');
+  reply.header('X-Content-Type-Options', 'nosniff');
+  reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  reply.header('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
+  reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+
+  // Content Security Policy - permite Google Fonts, Analytics, imagenes externas, service worker
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.google-analytics.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "img-src 'self' data: blob: https: http:",
+    "connect-src 'self' https://com-diaz.onrender.com https://com-diaz-web.onrender.com https://www.google-analytics.com https://region1.google-analytics.com https://wsrv.nl",
+    "frame-src 'self' https://www.googletagmanager.com",
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
+    "media-src 'self' https:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'"
+  ].join('; ');
+  reply.header('Content-Security-Policy', csp);
 });
 app.options('*', async (req, reply) => reply.code(204).send());
 

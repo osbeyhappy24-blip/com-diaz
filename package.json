@@ -13,6 +13,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "apify-client": "^2.25.0",
     "fastify": "^5.12.5",
     "node-cron": "^4.6.0",
     "web-push": "^3.6.7"

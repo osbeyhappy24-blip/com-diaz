@@ -6,3 +6,4 @@ data.json
 data.json.bak
 .vapid-keys.txt
 .env
+.apify-token

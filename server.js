@@ -11,6 +11,7 @@ import { SOURCES, DEFAULT_SOURCE_STATE, listSources } from './sources.js';
 import { notifyTelegram } from './telegram.js';
 import { subirImagen } from './imgbb.js';
 import { leerEstado, guardarEstado, isJSONBinConfigured } from './jsonbin.js';
+import { ApifyClient } from 'apify-client';
 import webpush from 'web-push';
 
 // Cargar claves VAPID desde .vapid-keys.txt
@@ -44,6 +45,26 @@ const BRAND = `
 `;
 
 const app = Fastify({ logger: true });
+
+// ─── Apify client (Temu scraper) ───
+let APIFY_TOKEN = process.env.APIFY_TOKEN || '';
+if (!APIFY_TOKEN) {
+  try {
+    const raw = fs.readFileSync(path.join(process.env.HOME || '.', '.apify-token'), 'utf8');
+    APIFY_TOKEN = (raw.match(/APIFY_TOKEN=(.+)/) || [])[1]?.trim() || '';
+  } catch(e) {}
+}
+let apifyClient = null;
+if (APIFY_TOKEN) {
+  try {
+    apifyClient = new ApifyClient({ token: APIFY_TOKEN });
+    console.log('[APIFY] Cliente Temu configurado');
+  } catch(e) {
+    console.warn('[APIFY] Error iniciando:', e.message);
+  }
+} else {
+  console.warn('[APIFY] Token no configurado - Temu desactivado');
+}
 
 // Zona horaria configurable (por defecto Cuba = America/Havana)
 const APP_TZ = process.env.COMDIAZ_TZ || 'America/Havana';
@@ -1744,6 +1765,50 @@ app.put('/api/orders/:id', async (req, reply) => {
 // ═══════════════════════════════════════════════
 // WEB PUSH - Suscripciones
 // ═══════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════
+// TEMU - Scraper via Apify
+// ═══════════════════════════════════════════════
+
+app.post('/api/temu/search', async (req, reply) => {
+  if (!apifyClient) {
+    reply.code(503);
+    return { ok: false, error: 'Apify no configurado' };
+  }
+  const body = req.body || {};
+  const keyword = String(body.keyword || '').trim();
+  const maxResults = Math.min(Math.max(Number(body.maxResults) || 20, 1), 100);
+  if (!keyword) {
+    reply.code(400);
+    return { ok: false, error: 'Falta keyword' };
+  }
+  try {
+    app.log.info('[TEMU] Buscando: ' + keyword);
+    const run = await apifyClient.actor('goat255/temu-products-scraper').call({
+      searchQuery: keyword,
+      maxResults: maxResults,
+      proxyConfig: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] }
+    }, { timeout: 180 });
+    const { items } = await apifyClient.dataset(run.defaultDatasetId).listItems();
+    const products = (items || []).map(it => ({
+      id: 'temu-' + (it.id || it.productId || Date.now()),
+      title: it.title || it.name || 'Producto Temu',
+      image: (it.images && it.images[0]) || it.image || '',
+      images: it.images || [],
+      priceBase: Number(it.price || it.priceValue || 0),
+      url: it.url || it.productUrl || '',
+      source: 'temu',
+      category: it.category || 'Importado'
+    })).filter(p => p.title && p.priceBase > 0);
+    app.log.info('[TEMU] Encontrados: ' + products.length);
+    logActivity('temu_search', { keyword, total: products.length });
+    return { ok: true, total: products.length, products };
+  } catch(e) {
+    app.log.error('[TEMU] Error: ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
 
 app.get('/api/public/vapid-key', async () => ({
   ok: true,

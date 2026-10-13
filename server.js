@@ -12,6 +12,7 @@ import { notifyTelegram } from './telegram.js';
 import { subirImagen } from './imgbb.js';
 import { leerEstado, guardarEstado, isJSONBinConfigured } from './jsonbin.js';
 import { ApifyClient } from 'apify-client';
+import { initApify, isApifyReady, searchSource, buildProductsForShop, SOURCES_CONFIG } from './import.js';
 import webpush from 'web-push';
 
 // Cargar claves VAPID desde .vapid-keys.txt
@@ -64,6 +65,12 @@ if (APIFY_TOKEN) {
   }
 } else {
   console.warn('[APIFY] Token no configurado - Temu desactivado');
+}
+
+// Iniciar modulo multi-fuente Import Hub
+if (APIFY_TOKEN) {
+  initApify(APIFY_TOKEN);
+  console.log('[IMPORT] Import Hub listo');
 }
 
 // Zona horaria configurable (por defecto Cuba = America/Havana)
@@ -218,6 +225,16 @@ const DEFAULTS = {
   loginAttempts: {}, // IP -> { count, blockedUntil }
   activityLog: [], // ultimos eventos
   subscriptions: [], // Web Push: suscripciones vinculadas a pedidos
+  importConfig: {
+    autoImport: {
+      enabled: false,
+      sources: {
+        temu:    { enabled: false, keywords: [], limit: 20, margin: 40 },
+        amazon:  { enabled: false, keywords: [], limit: 20, margin: 40 },
+        walmart: { enabled: false, keywords: [], limit: 20, margin: 40 }
+      }
+    }
+  },
   categories: DEFAULT_CATEGORIES,
   results: [],
   sources: JSON.parse(JSON.stringify(DEFAULT_SOURCE_STATE)),
@@ -517,6 +534,7 @@ async function cargarDesdeNube() {
       if (remoto.productosManuales) state.productosManuales = remoto.productosManuales;
       if (remoto.orders) state.orders = remoto.orders;
       if (remoto.subscriptions) state.subscriptions = remoto.subscriptions;
+      if (remoto.importConfig) state.importConfig = remoto.importConfig;
       if (remoto.visits) state.visits = remoto.visits;
       app.log.info("Config cargada desde JSONBin");
       return true;
@@ -550,6 +568,7 @@ async function guardarEnNube() {
       productosManuales: state.productosManuales || [],
       orders: (state.orders || []).slice(0, 200),
       subscriptions: (state.subscriptions || []).slice(-500),
+      importConfig: state.importConfig,
       visits: state.visits,
     };
     const result = await guardarEstado(esencia);
@@ -703,10 +722,38 @@ function schedule() {
   const expr = timesToCron(state.automation.publishTimes);
   app.log.info(`Comdiaz · cron "${expr}" (${state.automation.publishTimes.join(', ')})`);
 
-  task = cron.schedule(expr, () => {
+  task = cron.schedule(expr, async () => {
     if (!state.automation.running) {
       app.log.warn('Cron disparó pero automatización en pausa.');
       return;
+    }
+    // Auto-import de fuentes externas (antes de la busqueda normal)
+    try {
+      const cfg = state.importConfig?.autoImport;
+      if (cfg && cfg.enabled) {
+        app.log.info('Ejecutando auto-import de fuentes externas...');
+        for (const [sourceId, srcCfg] of Object.entries(cfg.sources || {})) {
+          if (!srcCfg.enabled || !srcCfg.keywords?.length) continue;
+          const imported = [];
+          for (const kw of srcCfg.keywords) {
+            try {
+              const productos = await searchSource(sourceId, kw, srcCfg.limit || 20);
+              imported.push(...buildProductsForShop(productos, srcCfg.margin || 40));
+            } catch(e) {
+              app.log.error('  auto-import err [' + sourceId + '/' + kw + ']: ' + e.message);
+            }
+          }
+          if (imported.length) {
+            state.productosManuales = state.productosManuales || [];
+            const ids = new Set(state.productosManuales.map(p => p.id));
+            const nuevos = imported.filter(p => !ids.has(p.id));
+            state.productosManuales = [...nuevos, ...state.productosManuales].slice(0, 500);
+            app.log.info('  ' + sourceId + ': ' + nuevos.length + ' productos importados');
+          }
+        }
+      }
+    } catch(e) {
+      app.log.error('Auto-import error general: ' + e.message);
     }
     app.log.info('Ejecutando búsqueda programada...');
     runSearch('cron');
@@ -1808,6 +1855,91 @@ app.post('/api/temu/search', async (req, reply) => {
     reply.code(500);
     return { ok: false, error: e.message };
   }
+});
+
+// ═══════════════════════════════════════════════
+// IMPORT HUB - Multi-fuente (Temu, Amazon, Walmart)
+// ═══════════════════════════════════════════════
+
+app.get('/api/import/sources', async () => ({
+  ok: true,
+  sources: Object.entries(SOURCES_CONFIG).map(([key, cfg]) => ({
+    id: key,
+    label: cfg.label,
+    icon: cfg.icon
+  }))
+}));
+
+app.get('/api/import/config', async () => ({
+  ok: true,
+  config: state.importConfig || { autoImport: { enabled: false, sources: {} } }
+}));
+
+app.post('/api/import/config', async (req) => {
+  const body = req.body || {};
+  if (body.autoImport) {
+    state.importConfig = state.importConfig || {};
+    state.importConfig.autoImport = { ...(state.importConfig.autoImport || {}), ...body.autoImport };
+  }
+  await save();
+  logActivity('import_config', { enabled: state.importConfig?.autoImport?.enabled });
+  return { ok: true, config: state.importConfig };
+});
+
+app.post('/api/import/search', async (req, reply) => {
+  if (!isApifyReady()) {
+    reply.code(503);
+    return { ok: false, error: 'Apify no configurado' };
+  }
+  const body = req.body || {};
+  const source = String(body.source || '').trim();
+  const keyword = String(body.keyword || '').trim();
+  const maxResults = Math.min(Math.max(Number(body.maxResults) || 20, 1), 100);
+  if (!source) { reply.code(400); return { ok: false, error: 'Falta source' }; }
+  if (!keyword) { reply.code(400); return { ok: false, error: 'Falta keyword' }; }
+  try {
+    const products = await searchSource(source, keyword, maxResults);
+    logActivity('import_search', { source, keyword, total: products.length });
+    return { ok: true, source, keyword, total: products.length, products };
+  } catch(e) {
+    app.log.error('[IMPORT] Error: ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+app.post('/api/import/run-now', async (req, reply) => {
+  const body = req.body || {};
+  const source = String(body.source || '').trim();
+  const keywords = Array.isArray(body.keywords) ? body.keywords : [];
+  const margin = Number(body.margin) || state.margin || 40;
+  const limit = Number(body.limit) || 20;
+
+  if (!source) { reply.code(400); return { ok: false, error: 'Falta source' }; }
+  if (!keywords.length) { reply.code(400); return { ok: false, error: 'Faltan keywords' }; }
+
+  const imported = [];
+  const errors = [];
+
+  for (const kw of keywords) {
+    try {
+      const productos = await searchSource(source, kw, limit);
+      const nuevos = buildProductsForShop(productos, margin);
+      imported.push(...nuevos);
+    } catch(e) {
+      errors.push({ keyword: kw, error: e.message });
+    }
+  }
+
+  // Filtrar duplicados (por id)
+  state.productosManuales = state.productosManuales || [];
+  const idsExistentes = new Set(state.productosManuales.map(p => p.id));
+  const nuevosUnicos = imported.filter(p => !idsExistentes.has(p.id));
+  state.productosManuales = [...nuevosUnicos, ...state.productosManuales].slice(0, 500);
+
+  await save();
+  logActivity('import_run', { source, keywords: keywords.length, imported: nuevosUnicos.length });
+  return { ok: true, source, imported: nuevosUnicos.length, errors };
 });
 
 app.get('/api/public/vapid-key', async () => ({

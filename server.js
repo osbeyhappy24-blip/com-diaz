@@ -149,51 +149,56 @@ const DB_FILE = path.join(process.cwd(), 'data.json');
 // 45 categorías por defecto de Comdiaz
 // dummyjson: [] significa "sin equivalente en la prueba, listo para Amazon/SheIn"
 const DEFAULT_CATEGORIES = [
-  { label: 'Ropa de Mujer',                 dummyjson: ['womens-dresses', 'tops'] },
-  { label: 'Ropa de Hombre',                dummyjson: ['mens-shirts'] },
-  { label: 'Ropa Infantil',                 dummyjson: [] },
-  { label: 'Calzado',                       dummyjson: ['mens-shoes', 'womens-shoes'] },
-  { label: 'Bolsos y Mochilas',             dummyjson: ['womens-bags'] },
-  { label: 'Bisutería y Accesorios',        dummyjson: ['womens-jewellery', 'womens-watches', 'mens-watches'] },
-  { label: 'Belleza',                       dummyjson: ['beauty', 'skin-care', 'fragrances'] },
-  { label: 'Cabello',                       dummyjson: [] },
-  { label: 'Barbería',                      dummyjson: [] },
-  { label: 'Hogar',                         dummyjson: ['home-decoration', 'furniture'] },
-  { label: 'Cocina',                        dummyjson: ['kitchen-accessories', 'groceries'] },
-  { label: 'Electrodomésticos',             dummyjson: ['kitchen-accessories'] },
-  { label: 'Electrónica',                   dummyjson: ['laptops', 'tablets', 'mobile-accessories'] },
-  { label: 'Teléfonos y Accesorios',        dummyjson: ['smartphones', 'mobile-accessories'] },
-  { label: 'Computación',                   dummyjson: ['laptops', 'tablets'] },
-  { label: 'Energía e Iluminación',         dummyjson: [] },
-  { label: 'Automóviles',                   dummyjson: ['vehicle'] },
-  { label: 'Piezas de Automóviles',         dummyjson: [] },
-  { label: 'Motos',                         dummyjson: ['motorcycle'] },
-  { label: 'Bicicletas',                    dummyjson: [] },
-  { label: 'Ferretería',                    dummyjson: [] },
-  { label: 'Herramientas',                  dummyjson: [] },
-  { label: 'Electricidad',                  dummyjson: [] },
-  { label: 'Plomería',                      dummyjson: [] },
-  { label: 'Pintura',                       dummyjson: [] },
-  { label: 'Agricultura y Jardinería',      dummyjson: [] },
-  { label: 'Deportes',                      dummyjson: ['sports-accessories'] },
-  { label: 'Niños y Juguetes',              dummyjson: [] },
-  { label: 'Material Escolar',              dummyjson: [] },
-  { label: 'Oficina',                       dummyjson: [] },
-  { label: 'Fotografía y Creación de Contenido', dummyjson: [] },
-  { label: 'Productos para Negocios',       dummyjson: [] },
-  { label: 'Repuestos de Electrodomésticos', dummyjson: [] },
-  { label: 'Reparación de Teléfonos',       dummyjson: ['mobile-accessories'] },
-  { label: 'Mascotas',                      dummyjson: [] },
-  { label: 'Viajes',                        dummyjson: [] },
-  { label: 'Fiestas y Eventos',             dummyjson: [] },
-  { label: 'Costura',                       dummyjson: [] },
-  { label: 'Manualidades',                  dummyjson: [] },
-  { label: 'Seguridad',                     dummyjson: [] },
-  { label: 'Limpieza',                      dummyjson: [] },
-  { label: 'Accesibilidad',                 dummyjson: [] },
-  { label: 'Regalos',                       dummyjson: [] },
-  { label: 'Productos Profesionales',       dummyjson: [] },
-  { label: 'Energía Solar',                 dummyjson: [] },
+  // ═══ ALTA DEMANDA CUBA - ELECTRÓNICA ═══
+  { label: '📱 Celulares y Accesorios',        dummyjson: ['smartphones', 'iphone', 'samsung-galaxy', 'phone-case', 'screen-protector'] },
+  { label: '💻 Computación',                    dummyjson: ['laptops', 'tablets', 'keyboard', 'mouse', 'computer-accessories'] },
+  { label: '🎧 Audio y Audífonos',              dummyjson: ['headphones', 'earbuds', 'bluetooth-speaker', 'soundbar'] },
+  { label: '⌚ Relojes y Smartwatch',           dummyjson: ['watches', 'smartwatch', 'apple-watch', 'digital-watch'] },
+  { label: '🎮 Gaming',                         dummyjson: ['gaming-controller', 'gaming-headset', 'video-games', 'gaming-mouse'] },
+
+  // ═══ ENERGÍA - CRÍTICO EN CUBA ═══
+  { label: '☀️ Paneles Solares e Inversores',   dummyjson: ['solar-panel', 'solar-generator', 'power-inverter', 'solar-charger'] },
+  { label: '🔋 Baterías y Cargadores',          dummyjson: ['power-bank', 'battery-charger', 'car-battery', 'rechargeable-battery'] },
+  { label: '💡 Iluminación LED',                dummyjson: ['led-lights', 'solar-lights', 'flashlight', 'led-bulbs'] },
+  { label: '⚡ Energía y Electricidad',         dummyjson: ['electrical-tools', 'cables', 'extension-cord', 'voltage-regulator'] },
+
+  // ═══ ROPA Y CALZADO ═══
+  { label: '👕 Ropa de Hombre',                 dummyjson: ['mens-shirts', 'mens-shoes', 'mens-jeans', 'mens-polos'] },
+  { label: '👗 Ropa de Mujer',                  dummyjson: ['womens-dresses', 'womens-tops', 'womens-jeans', 'leggings'] },
+  { label: '🧒 Ropa Infantil',                  dummyjson: ['kids-clothing', 'baby-clothes', 'children-shoes'] },
+  { label: '👟 Calzado',                        dummyjson: ['sneakers', 'mens-shoes', 'womens-shoes', 'running-shoes', 'sandals'] },
+  { label: '👜 Bolsos y Mochilas',              dummyjson: ['womens-bags', 'backpacks', 'handbags', 'wallets'] },
+
+  // ═══ BELLEZA Y CUIDADO PERSONAL ═══
+  { label: '💄 Belleza y Maquillaje',           dummyjson: ['beauty', 'makeup', 'fragrances', 'cosmetics'] },
+  { label: '🧴 Cuidado de la Piel',             dummyjson: ['skin-care', 'face-cream', 'sunscreen', 'serum'] },
+  { label: '💇 Cabello y Pelucas',              dummyjson: ['wig', 'hair-extensions', 'hair-dryer', 'hair-straightener'] },
+  { label: '💈 Barbería',                       dummyjson: ['hair-clipper', 'shaver', 'razor', 'beard-trimmer'] },
+  { label: '💍 Bisutería y Joyería',            dummyjson: ['womens-jewellery', 'necklace', 'earrings', 'bracelet'] },
+  { label: '🕶️ Accesorios Personales',          dummyjson: ['sunglasses', 'hats', 'belts', 'caps'] },
+
+  // ═══ HOGAR Y COCINA ═══
+  { label: '🍳 Cocina',                         dummyjson: ['kitchen-accessories', 'cookware', 'kitchen-tools', 'blender'] },
+  { label: '🔌 Electrodomésticos',              dummyjson: ['air-fryer', 'coffee-machine', 'microwave', 'electric-kettle'] },
+  { label: '🏠 Hogar y Decoración',             dummyjson: ['home-decoration', 'bedding', 'curtains', 'furniture'] },
+  { label: '🧹 Limpieza',                       dummyjson: ['cleaning-supplies', 'vacuum-cleaner', 'mop'] },
+
+  // ═══ HERRAMIENTAS Y TALLER ═══
+  { label: '🔧 Herramientas',                   dummyjson: ['tools', 'drill', 'screwdriver', 'wrench', 'tool-set'] },
+  { label: '🔩 Ferretería',                     dummyjson: ['hardware', 'nails', 'hinges', 'door-locks'] },
+  { label: '🚿 Plomería',                       dummyjson: ['plumbing', 'faucet', 'water-pump', 'pipes'] },
+
+  // ═══ VEHÍCULOS Y TRANSPORTE ═══
+  { label: '🚗 Piezas de Autos',                dummyjson: ['car-parts', 'car-accessories', 'motor-oil', 'car-tools'] },
+  { label: '🏍️ Motos y Bicicletas',            dummyjson: ['motorcycle', 'motorcycle-parts', 'bicycle', 'bicycle-parts'] },
+
+  // ═══ FAMILIA Y ENTRETENIMIENTO ═══
+  { label: '🧸 Niños y Juguetes',               dummyjson: ['toys', 'lego', 'dolls', 'action-figures'] },
+  { label: '📚 Escolar y Papelería',            dummyjson: ['stationery', 'notebooks', 'school-supplies', 'pens'] },
+  { label: '🏋️ Deportes y Fitness',             dummyjson: ['sports-accessories', 'fitness-equipment', 'yoga-mat', 'gym-gloves'] },
+  { label: '🐕 Mascotas',                       dummyjson: ['pet-supplies', 'dog-food', 'pet-toys', 'cat-supplies'] },
+  { label: '🎉 Fiestas y Eventos',              dummyjson: ['party-decorations', 'balloons', 'gift-wrap', 'party-supplies'] },
+  { label: '💊 Salud y Bienestar',              dummyjson: ['vitamins', 'supplements', 'first-aid', 'medical-supplies'] },
 ];
 
 const DEFAULTS = {

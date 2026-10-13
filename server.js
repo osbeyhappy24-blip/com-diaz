@@ -1784,21 +1784,21 @@ app.post('/api/temu/search', async (req, reply) => {
   }
   try {
     app.log.info('[TEMU] Buscando: ' + keyword);
-    const run = await apifyClient.actor('amit123/temu-products-scraper').call({
-      searchQueries: [keyword],
+    const run = await apifyClient.actor('scrapesage/temu-scraper').call({
+      searchTerms: [keyword],
       maxResults: maxResults,
       proxyConfig: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] }
     }, { timeout: 180 });
     const { items } = await apifyClient.dataset(run.defaultDatasetId).listItems();
     const products = (items || []).map(it => ({
-      id: 'temu-' + (it.id || it.productId || Date.now()),
-      title: it.title || it.name || 'Producto Temu',
-      image: (it.images && it.images[0]) || it.image || '',
-      images: it.images || [],
-      priceBase: Number(it.price || it.priceValue || 0),
-      url: it.url || it.productUrl || '',
+      id: 'temu-' + (it.productId || it.id || Date.now()),
+      title: it.title || 'Producto Temu',
+      image: it.imageUrl || it.image || '',
+      images: it.imageUrl ? [it.imageUrl] : (it.images || []),
+      priceBase: Number(it.price || 0),
+      url: it.url || '',
       source: 'temu',
-      category: it.category || 'Importado'
+      category: 'Importado'
     })).filter(p => p.title && p.priceBase > 0);
     app.log.info('[TEMU] Encontrados: ' + products.length);
     logActivity('temu_search', { keyword, total: products.length });

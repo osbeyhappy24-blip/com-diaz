@@ -851,12 +851,13 @@ app.post('/api/automation/pause', async () => {
 });
 
 app.post('/api/margin', async (req) => {
-  state.margin = Number(req.body?.margin) || state.margin;
   const marginViejo = state.margin;
-  state.margin = Number(req.body?.margin) || state.margin;
+  const marginNuevo = Number(req.body?.margin);
+  if (!marginNuevo || marginNuevo < 0 || marginNuevo > 500) {
+    return { ok: false, error: 'Margen debe ser entre 0 y 500' };
+  }
+  state.margin = marginNuevo;
   if (marginViejo !== state.margin) logActivity('margin', { viejo: marginViejo, nuevo: state.margin });
-  // Evitar doble asignacion
-  state.margin = state.margin;
   state.results = state.results.map(r => ({
     ...r,
     salePrice: +(r.basePrice * (1 + state.margin / 100)).toFixed(2),

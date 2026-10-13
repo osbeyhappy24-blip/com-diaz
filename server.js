@@ -1777,7 +1777,7 @@ app.post('/api/temu/search', async (req, reply) => {
   }
   const body = req.body || {};
   const keyword = String(body.keyword || '').trim();
-  const maxResults = Math.min(Math.max(Number(body.maxResults) || 20, 1), 100);
+  const maxResults = Math.min(Math.max(Number(body.maxResults) || 20, 20), 100);
   if (!keyword) {
     reply.code(400);
     return { ok: false, error: 'Falta keyword' };

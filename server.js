@@ -775,7 +775,7 @@ function schedule() {
       if (cfg && cfg.enabled) {
         app.log.info('Ejecutando auto-import multi-fuente desde categorias...');
         const limitPerCat = Number(cfg.limitPerCategory) || 5;
-        const marginPct = Number(cfg.margin) || 40;
+        const marginPct = Number(state.margin) || 35;
         const catsFiltro = Array.isArray(cfg.categories) && cfg.categories.length
           ? cfg.categories
           : state.categories.map(c => c.label);
@@ -1984,7 +1984,7 @@ app.post('/api/import/run-now', async (req, reply) => {
   const body = req.body || {};
   const source = String(body.source || '').trim();
   const keywords = Array.isArray(body.keywords) ? body.keywords : [];
-  const margin = Number(body.margin) || state.margin || 40;
+  const margin = Number(state.margin) || 35; // Unificado con margen global
   const limit = Number(body.limit) || 20;
 
   if (!source) { reply.code(400); return { ok: false, error: 'Falta source' }; }

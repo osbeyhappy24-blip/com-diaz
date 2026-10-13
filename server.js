@@ -2111,6 +2111,33 @@ app.post('/api/import/run-now', async (req, reply) => {
 // TESORERIA - Movimientos e ingresos/egresos
 // ═══════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════
+// IMPORT MASIVO DE PRODUCTOS (reemplaza la lista completa)
+// ═══════════════════════════════════════════════
+
+app.post('/api/products/replace-all', async (req, reply) => {
+  const body = req.body || {};
+  if (body.confirm !== 'REPLACE') {
+    reply.code(400);
+    return { ok: false, error: 'Envia { confirm: "REPLACE" } para confirmar' };
+  }
+  if (!Array.isArray(body.productos)) {
+    reply.code(400);
+    return { ok: false, error: 'Falta array productos' };
+  }
+  const antes = (state.productosManuales || []).length;
+  state.productosManuales = body.productos.slice(0, 500);
+  const despues = state.productosManuales.length;
+  await save();
+  logActivity('products_replace', { antes, despues });
+  return {
+    ok: true,
+    mensaje: 'Productos reemplazados',
+    antes,
+    despues
+  };
+});
+
 app.get('/api/tesoreria/movimientos', async (req) => {
   const tipo = String(req.query?.tipo || '').trim();
   const categoria = String(req.query?.categoria || '').trim();

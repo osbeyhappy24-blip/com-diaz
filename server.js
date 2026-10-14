@@ -602,7 +602,7 @@ async function guardarEnNube() {
       // Guardar solo los ultimos 100 productos eBay (publicados) para recuperar tras reinicio
       results: (state.results || [])
         .filter(r => (state.published || []).includes(r.id))
-        .slice(0, 100)
+        .slice(0, 500)
         .map(r => ({
           id: r.id,
           title: (r.title || '').slice(0, 120),
@@ -612,7 +612,7 @@ async function guardarEnNube() {
           source: r.source,
           url: r.url
         })),
-      productosManuales: (state.productosManuales || []).slice(0, 300).map(p => ({
+      productosManuales: (state.productosManuales || []).slice(0, 500).map(p => ({
         id: p.id,
         title: (p.title || '').slice(0, 150),
         image: p.image,
@@ -2135,6 +2135,71 @@ app.post('/api/products/replace-all', async (req, reply) => {
     mensaje: 'Productos reemplazados',
     antes,
     despues
+  };
+});
+
+// ═══════════════════════════════════════════════
+// BACKUP / RESTORE COMPLETO
+// ═══════════════════════════════════════════════
+
+app.get('/api/backup/export', async (req, reply) => {
+  reply.header('Content-Type', 'application/json');
+  reply.header('Content-Disposition', 'attachment; filename="comdiaz-backup-' + new Date().toISOString().slice(0,10) + '.json"');
+  // Devolver el state completo
+  return state;
+});
+
+app.post('/api/backup/import', async (req, reply) => {
+  const body = req.body || {};
+  if (body.confirm !== 'RESTORE') {
+    reply.code(400);
+    return { ok: false, error: 'Envia { confirm: "RESTORE" } para confirmar' };
+  }
+  if (!body.state || typeof body.state !== 'object') {
+    reply.code(400);
+    return { ok: false, error: 'Falta campo "state" con el backup' };
+  }
+  const antes = {
+    productos: (state.productosManuales || []).length,
+    orders: (state.orders || []).length,
+    tesoreria: (state.tesoreria?.movimientos || []).length
+  };
+  // Reemplazar campos clave sin perder otros
+  const backup = body.state;
+  if (backup.productosManuales) state.productosManuales = backup.productosManuales;
+  if (backup.results) state.results = backup.results;
+  if (backup.published) state.published = backup.published;
+  if (backup.orders) state.orders = backup.orders;
+  if (backup.tesoreria) state.tesoreria = backup.tesoreria;
+  if (backup.subscriptions) state.subscriptions = backup.subscriptions;
+  if (backup.categories) state.categories = backup.categories;
+  if (backup.shopConfig) state.shopConfig = backup.shopConfig;
+  if (backup.importConfig) state.importConfig = backup.importConfig;
+  if (backup.margin !== undefined) state.margin = backup.margin;
+  if (backup.featured) state.featured = backup.featured;
+  const despues = {
+    productos: (state.productosManuales || []).length,
+    orders: (state.orders || []).length,
+    tesoreria: (state.tesoreria?.movimientos || []).length
+  };
+  await save();
+  logActivity('backup_restore', { antes, despues });
+  return { ok: true, mensaje: 'Estado restaurado desde backup', antes, despues };
+});
+
+app.get('/api/backup/info', async (req) => {
+  return {
+    ok: true,
+    info: {
+      productosManuales: (state.productosManuales || []).length,
+      results: (state.results || []).length,
+      published: (state.published || []).length,
+      orders: (state.orders || []).length,
+      tesoreriaMovs: (state.tesoreria?.movimientos || []).length,
+      subscriptions: (state.subscriptions || []).length,
+      categories: (state.categories || []).length,
+      pesoAproxKB: Math.round(JSON.stringify(state).length / 1024)
+    }
   };
 });
 

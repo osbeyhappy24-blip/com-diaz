@@ -1659,6 +1659,161 @@ app.post('/api/upload-image', async (req, reply) => {
 // DASHBOARD DE ESTADISTICAS
 // ═══════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════
+// GENERADOR DE PUBLICACIONES PARA REDES
+// ═══════════════════════════════════════════════
+
+app.post('/api/posts/generate', async (req, reply) => {
+  const body = req.body || {};
+  const tipo = String(body.tipo || 'oferta').trim();
+  const ref = String(body.ref || '').trim() || 'directo';
+  const cfg = state.shopConfig || {};
+  const wa = cfg.whatsapp || '5351425691';
+  const shopUrl = 'https://com-diaz-web.onrender.com/shop.html?ref=' + encodeURIComponent(ref);
+
+  // Obtener productos publicos
+  const manuales = (state.productosManuales || []).filter(p => p.publicado !== false);
+  const ebay = (state.results || [])
+    .filter(r => (state.published || []).includes(r.id))
+    .map(r => ({
+      id: r.id,
+      title: r.title,
+      salePrice: r.salePrice,
+      category: r.category,
+      source: r.source || 'ebay',
+      url: r.url
+    }));
+  const todos = manuales.concat(ebay).filter(p => p.salePrice > 0 && p.title);
+
+  if (!todos.length) {
+    reply.code(400);
+    return { ok: false, error: 'No hay productos en el catalogo' };
+  }
+
+  function pick(arr, n) {
+    const copy = [...arr];
+    const out = [];
+    for (let i = 0; i < n && copy.length; i++) {
+      const idx = Math.floor(Math.random() * copy.length);
+      out.push(copy.splice(idx, 1)[0]);
+    }
+    return out;
+  }
+
+  function formatoProducto(p, i) {
+    const precio = Number(p.salePrice || 0).toFixed(2);
+    const titulo = (p.title || '').slice(0, 70).replace(/\n/g, ' ');
+    const cat = p.category || '';
+    return (i + 1) + '. *' + titulo + '*\n   💰 $' + precio + (cat ? ' · ' + cat : '');
+  }
+
+  let texto = '';
+  let titulo = '';
+
+  if (tipo === 'oferta') {
+    const p = pick(todos, 1)[0];
+    titulo = '🔥 OFERTA DEL DÍA';
+    texto = titulo + '\n\n' +
+      '⭐ ' + p.title.slice(0, 80) + '\n' +
+      '💰 Precio: *$' + Number(p.salePrice).toFixed(2) + '*\n' +
+      (p.category ? '📦 ' + p.category + '\n' : '') +
+      '\n🚚 Envío a toda Cuba\n' +
+      '💵 Pago al recibir\n\n' +
+      '👉 Ver más: ' + shopUrl + '\n\n' +
+      '📲 Pedidos: https://wa.me/' + wa + '\n\n' +
+      '⏰ ¡Solo por hoy!';
+  }
+
+  else if (tipo === 'novedades') {
+    const lista = todos.slice(0, 5);
+    titulo = '✨ NOVEDADES EN LA SHOP';
+    texto = titulo + '\n\n' +
+      'Estos productos recién llegaron:\n\n' +
+      lista.map((p, i) => formatoProducto(p, i)).join('\n\n') +
+      '\n\n━━━━━━━━━━━━━━━\n' +
+      '🚚 Envíos a toda Cuba\n' +
+      '💵 Pago contra entrega\n\n' +
+      '👉 Catálogo completo: ' + shopUrl + '\n\n' +
+      '📲 Pedidos: https://wa.me/' + wa;
+  }
+
+  else if (tipo === 'destacados') {
+    const lista = pick(todos, 5);
+    titulo = '⭐ PRODUCTOS DESTACADOS';
+    texto = titulo + '\n\n' +
+      'Selección de hoy:\n\n' +
+      lista.map((p, i) => formatoProducto(p, i)).join('\n\n') +
+      '\n\n━━━━━━━━━━━━━━━\n' +
+      '🎁 Más de 2000 productos disponibles\n' +
+      '🚚 Envíos a toda Cuba\n\n' +
+      '👉 ' + shopUrl + '\n\n' +
+      '📲 Pedidos: https://wa.me/' + wa;
+  }
+
+  else if (tipo === 'promocion') {
+    const promos = (cfg.promociones || []).filter(p => p && p.activo !== false);
+    const promoTexto = promos.length
+      ? promos.map(p => (p.emoji ? emojiToChar(p.emoji) + ' ' : '') + p.texto).join('\n')
+      : '🎁 ' + (cfg.bannerTexto || 'Ofertas especiales esta semana');
+    const lista = pick(todos, 3);
+    titulo = '🎁 PROMOCIÓN ESPECIAL';
+    texto = titulo + '\n\n' +
+      promoTexto + '\n\n' +
+      '🔥 Aprovecha estos productos:\n\n' +
+      lista.map((p, i) => formatoProducto(p, i)).join('\n\n') +
+      '\n\n━━━━━━━━━━━━━━━\n' +
+      '👉 ' + shopUrl + '\n\n' +
+      '📲 Pedidos: https://wa.me/' + wa;
+  }
+
+  else if (tipo === 'categoria') {
+    const cat = String(body.categoria || '').trim();
+    const deCat = cat ? todos.filter(p => p.category === cat) : todos;
+    const lista = pick(deCat.length ? deCat : todos, 5);
+    titulo = '🛍️ LO QUE BUSCAS';
+    texto = titulo + '\n\n' +
+      (cat ? 'Productos de *' + cat + '*:\n\n' : 'Selección de productos:\n\n') +
+      lista.map((p, i) => formatoProducto(p, i)).join('\n\n') +
+      '\n\n━━━━━━━━━━━━━━━\n' +
+      '👉 ' + shopUrl + '\n\n' +
+      '📲 Pedidos: https://wa.me/' + wa;
+  }
+
+  else if (tipo === 'custom') {
+    const base = String(body.texto || '').trim();
+    texto = base.replace(/{link}/g, shopUrl).replace(/{wa}/g, wa);
+    titulo = 'Mensaje personalizado';
+  }
+
+  else {
+    reply.code(400);
+    return { ok: false, error: 'tipo invalido' };
+  }
+
+  // Reemplazar emoji codes de promociones
+  function emojiToChar(code) {
+    const map = {
+      truck: '🚚', gift: '🎁', star: '⭐', fire: '🔥', money: '💰',
+      cart: '🛒', bell: '🔔', sparkles: '✨', whatsapp: '💬', clock: '⏰', rocket: '🚀'
+    };
+    return map[code] || '';
+  }
+  // Aplicar conversion en todo el texto por si quedaron codes
+  texto = texto.replace(/\b(truck|gift|star|fire|money|cart|bell|sparkles|whatsapp|clock|rocket)\b/g, (m) => emojiToChar(m));
+
+  logActivity('post_generate', { tipo, ref });
+  return {
+    ok: true,
+    tipo,
+    ref,
+    titulo,
+    texto,
+    link: shopUrl,
+    whatsapp: wa,
+    longitud: texto.length
+  };
+});
+
 app.get('/api/stats/dashboard', async (req) => {
   const v = state.visits || {};
   const devices = v.devices || {};

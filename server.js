@@ -1214,7 +1214,7 @@ setInterval(() => {
 // GET público: catálogo de productos publicados
 app.get('/api/public/catalog', async (req) => {
   const page = Math.max(Number(req.query?.page) || 1, 1);
-  const perPage = Math.min(Math.max(Number(req.query?.perPage) || 100, 20), 300);
+  const perPage = Math.min(Math.max(Number(req.query?.perPage) || 100, 1), 300);
   const limit = page * perPage; // Traer hasta la pagina actual
   const categoria = req.query?.categoria;
 

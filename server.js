@@ -1655,6 +1655,91 @@ app.post('/api/upload-image', async (req, reply) => {
 // ═══════════════════════════════════════════════
 // CONTADOR DE VISITAS PROPIO
 // ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════
+// DASHBOARD DE ESTADISTICAS
+// ═══════════════════════════════════════════════
+
+app.get('/api/stats/dashboard', async (req) => {
+  const v = state.visits || {};
+  const devices = v.devices || {};
+  const referidos = v.referidos || {};
+  const byDay = v.byDay || {};
+  const byProduct = v.byProduct || {};
+
+  const now = new Date();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const hoy = now.toISOString().slice(0, 10);
+  const hace7d = new Date(now.getTime() - 7 * dayMs).toISOString();
+  const hace30d = new Date(now.getTime() - 30 * dayMs).toISOString();
+
+  // ─── Dispositivos ───
+  const deviceList = Object.entries(devices);
+  const totalDevices = deviceList.length;
+  const appsInstaladas = deviceList.filter(([_, d]) => d.isApp === true).length;
+  const activos7d = deviceList.filter(([_, d]) => (d.ultimaVez || '') >= hace7d).length;
+  const activos30d = deviceList.filter(([_, d]) => (d.ultimaVez || '') >= hace30d).length;
+
+  // ─── Visitas ───
+  const visitasHoy = byDay[hoy]?.visitas || 0;
+  let visitas7d = 0, visitas30d = 0;
+  for (const [k, d] of Object.entries(byDay)) {
+    if (k >= hace7d.slice(0, 10)) visitas7d += d.visitas || 0;
+    if (k >= hace30d.slice(0, 10)) visitas30d += d.visitas || 0;
+  }
+
+  // ─── Top productos ───
+  const topProductos = Object.entries(byProduct)
+    .map(([id, p]) => ({ id, title: p.title || '', count: p.count || 0 }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  // ─── Referidos ───
+  const topReferidos = Object.entries(referidos)
+    .map(([ref, r]) => ({ ref, visitas: r.visitas || 0, pedidos: r.pedidos || 0 }))
+    .sort((a, b) => b.visitas - a.visitas)
+    .slice(0, 15);
+
+  // ─── Conversion ───
+  const totalVisitas = v.total || 0;
+  const totalPedidos = (state.orders || []).length;
+  const tasaConversion = totalVisitas > 0 ? +((totalPedidos / totalVisitas) * 100).toFixed(2) : 0;
+
+  return {
+    ok: true,
+    dispositivos: {
+      total: totalDevices,
+      appsInstaladas,
+      activos7d,
+      activos30d,
+      web: totalDevices - appsInstaladas
+    },
+    visitas: {
+      hoy: visitasHoy,
+      ultimos7d: visitas7d,
+      ultimos30d: visitas30d,
+      total: totalVisitas
+    },
+    pedidos: {
+      total: totalPedidos,
+      tasaConversion
+    },
+    topProductos,
+    referidos: topReferidos,
+    ultimosDispositivos: deviceList
+      .sort((a, b) => (b[1].ultimaVez || '').localeCompare(a[1].ultimaVez || ''))
+      .slice(0, 10)
+      .map(([id, d]) => ({
+        id: id.slice(0, 12) + '...',
+        primeraVez: d.primeraVez,
+        ultimaVez: d.ultimaVez,
+        dispositivo: d.dispositivo,
+        isApp: d.isApp,
+        ref: d.ref,
+        visitas: d.visitas
+      }))
+  };
+});
+
 app.post('/api/track-visit', async (req, reply) => {
   reply.header('Cache-Control', 'no-store');
 
@@ -1667,12 +1752,17 @@ app.post('/api/track-visit', async (req, reply) => {
     const tipo = String(body.tipo || 'page'); // page, product, cart, whatsapp
     const productId = body.productId ? String(body.productId).slice(0, 80) : null;
     const productTitle = body.productTitle ? String(body.productTitle).slice(0, 120) : null;
+    const deviceId = body.deviceId ? String(body.deviceId).slice(0, 60) : null;
+    const ref = body.ref ? String(body.ref).slice(0, 40) : null;
+    const isApp = body.isApp === true;
 
     // Inicializar
     state.visits = state.visits || { total: 0, history: [], byDay: {}, byProduct: {} };
     if (!state.visits.byDay) state.visits.byDay = {};
     if (!state.visits.byProduct) state.visits.byProduct = {};
     if (!Array.isArray(state.visits.history)) state.visits.history = [];
+    if (!state.visits.devices) state.visits.devices = {};
+    if (!state.visits.referidos) state.visits.referidos = {};
 
     const ahora = new Date();
     const dayKey = ahora.toISOString().slice(0, 10); // YYYY-MM-DD
@@ -1725,7 +1815,35 @@ app.post('/api/track-visit', async (req, reply) => {
     // Total
     if (tipo === 'page') state.visits.total++;
 
-    // Guardar cada 10 visitas para no saturar (o siempre si es pocas)
+    // ─── Registrar dispositivo unico ───
+    if (deviceId) {
+      const ahoraISO = ahora.toISOString();
+      if (!state.visits.devices[deviceId]) {
+        state.visits.devices[deviceId] = {
+          primeraVez: ahoraISO,
+          ultimaVez: ahoraISO,
+          dispositivo,
+          isApp: isApp,
+          ref: ref || null,
+          visitas: 1,
+          pedidos: 0
+        };
+      } else {
+        state.visits.devices[deviceId].ultimaVez = ahoraISO;
+        state.visits.devices[deviceId].visitas = (state.visits.devices[deviceId].visitas || 0) + 1;
+        if (isApp) state.visits.devices[deviceId].isApp = true;
+      }
+    }
+
+    // ─── Registrar referido (fuente de trafico) ───
+    if (ref && tipo === 'page') {
+      if (!state.visits.referidos[ref]) {
+        state.visits.referidos[ref] = { visitas: 0, pedidos: 0, primeraVez: ahora.toISOString() };
+      }
+      state.visits.referidos[ref].visitas++;
+    }
+
+    // Guardar cada 5 visitas para no saturar
     if (state.visits.total % 5 === 0) await save();
 
     return { ok: true };
@@ -1875,6 +1993,17 @@ app.post('/api/track-order', async (req, reply) => {
     };
     state.orders.unshift(nuevaOrden);
     if (state.orders.length > 500) state.orders.length = 500;
+
+    // ─── Registrar pedido en deviceId + referido ───
+    const deviceIdOrder = body.deviceId ? String(body.deviceId).slice(0, 60) : null;
+    const refOrder = body.ref ? String(body.ref).slice(0, 40) : null;
+    if (deviceIdOrder && state.visits?.devices?.[deviceIdOrder]) {
+      state.visits.devices[deviceIdOrder].pedidos = (state.visits.devices[deviceIdOrder].pedidos || 0) + 1;
+    }
+    if (refOrder && state.visits?.referidos?.[refOrder]) {
+      state.visits.referidos[refOrder].pedidos = (state.visits.referidos[refOrder].pedidos || 0) + 1;
+    }
+
     await save();
     return { ok: true, orderId };
   } catch (e) {

@@ -1209,7 +1209,7 @@ setInterval(() => {
 
 // GET público: catálogo de productos publicados
 app.get('/api/public/catalog', async (req) => {
-  const limit = Math.min(Number(req.query?.limit) || 200, state.shopConfig?.maxProductos || 200);
+  const limit = Math.min(Number(req.query?.limit) || 3000, 3000); // Enviar todos los productos (max 3000)
   const categoria = req.query?.categoria;
 
   // Importados (siempre se publican automáticamente)

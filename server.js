@@ -409,7 +409,12 @@ function buildShareText(opts = {}) {
   }
 
   out.push('--------------------------');
-  out.push('Pedidos por WhatsApp');
+  out.push('🛍️ *Ver catalogo completo:*');
+  out.push('https://com-diaz-web.onrender.com/shop.html');
+  out.push('');
+  out.push('📲 *Pedidos por WhatsApp:*');
+  out.push('https://wa.me/5351425691');
+  out.push('');
   out.push('Responde este mensaje con el nombre del producto');
 
   return {

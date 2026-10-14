@@ -2790,16 +2790,41 @@ app.post('/api/orders/clean-old', async (req) => {
 });
 
 // ═══════════════════════════════════════════════
-// HISTORIAL DE PEDIDOS POR WHATSAPP (publico)
+// HISTORIAL DE PEDIDOS (requiere WhatsApp + ID de pedido)
 // ═══════════════════════════════════════════════
 
-app.get('/api/public/orders/whatsapp/:wa', async (req, reply) => {
-  const wa = String(req.params.wa || '').replace(/[^0-9]/g, '');
+app.post('/api/public/orders/verify', async (req, reply) => {
+  const body = req.body || {};
+  const wa = String(body.whatsapp || '').replace(/[^0-9]/g, '');
+  const verifyId = String(body.pedidoId || '').trim().toUpperCase();
+  const verifyIdAlt = String(body.pedidoId || '').trim(); // sin uppercase por si acaso
+
   if (!wa || wa.length < 8) {
     reply.code(400);
     return { ok: false, error: 'WhatsApp invalido' };
   }
-  // Buscar todos los pedidos de ese whatsapp
+  if (!verifyId) {
+    reply.code(400);
+    return { ok: false, error: 'Ingresa el ID de uno de tus pedidos' };
+  }
+
+  // Buscar el pedido de referencia (por ID)
+  const refOrder = (state.orders || []).find(o =>
+    String(o.id).toUpperCase() === verifyId || String(o.id) === verifyIdAlt
+  );
+  if (!refOrder) {
+    reply.code(404);
+    return { ok: false, error: 'Pedido ' + verifyId + ' no existe' };
+  }
+
+  // Validar que ese pedido pertenece a ese WhatsApp
+  const refWa = String(refOrder.whatsapp || '').replace(/[^0-9]/g, '');
+  if (refWa !== wa) {
+    reply.code(403);
+    return { ok: false, error: 'El WhatsApp no coincide con ese pedido' };
+  }
+
+  // OK - WhatsApp verificado. Devolver TODOS los pedidos de ese WhatsApp
   const todos = (state.orders || []).filter(o => {
     const ow = String(o.whatsapp || '').replace(/[^0-9]/g, '');
     return ow === wa;

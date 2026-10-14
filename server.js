@@ -2789,6 +2789,50 @@ app.post('/api/orders/clean-old', async (req) => {
   return { ok: true, eliminados: antes - despues, total: despues };
 });
 
+// ═══════════════════════════════════════════════
+// HISTORIAL DE PEDIDOS POR WHATSAPP (publico)
+// ═══════════════════════════════════════════════
+
+app.get('/api/public/orders/whatsapp/:wa', async (req, reply) => {
+  const wa = String(req.params.wa || '').replace(/[^0-9]/g, '');
+  if (!wa || wa.length < 8) {
+    reply.code(400);
+    return { ok: false, error: 'WhatsApp invalido' };
+  }
+  // Buscar todos los pedidos de ese whatsapp
+  const todos = (state.orders || []).filter(o => {
+    const ow = String(o.whatsapp || '').replace(/[^0-9]/g, '');
+    return ow === wa;
+  });
+  // Ordenar por fecha (mas reciente primero)
+  todos.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+  // Devolver solo datos publicos (sin notas internas ni whatsapp completo)
+  const pedidos = todos.map(o => ({
+    id: o.id,
+    nombre: o.nombre,
+    estado: o.estado,
+    agencia: o.agencia || '',
+    tracking: o.tracking || '',
+    total: o.total,
+    items: (o.items || []).map(it => ({
+      title: it.title,
+      qty: it.qty || 1,
+      price: it.price
+    })),
+    historial: o.historial || [],
+    createdAt: o.createdAt,
+    actualizado: o.actualizado
+  }));
+
+  return {
+    ok: true,
+    total: pedidos.length,
+    whatsapp: wa.slice(0, 4) + '****' + wa.slice(-2),
+    pedidos
+  };
+});
+
 app.get('/api/public/order/:id', async (req, reply) => {
   const id = String(req.params.id || '').trim();
   const order = (state.orders || []).find(o => String(o.id) === id);

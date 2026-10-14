@@ -1213,7 +1213,9 @@ setInterval(() => {
 
 // GET público: catálogo de productos publicados
 app.get('/api/public/catalog', async (req) => {
-  const limit = Math.min(Number(req.query?.limit) || 3000, 3000); // Enviar todos los productos (max 3000)
+  const page = Math.max(Number(req.query?.page) || 1, 1);
+  const perPage = Math.min(Math.max(Number(req.query?.perPage) || 100, 20), 300);
+  const limit = page * perPage; // Traer hasta la pagina actual
   const categoria = req.query?.categoria;
 
   // Importados (siempre se publican automáticamente)
@@ -1260,7 +1262,13 @@ app.get('/api/public/catalog', async (req) => {
     idx++;
   }
 
-  items = intercalados;
+  // Paginacion real: devolver desde 0 hasta page*perPage
+  const itemsCompletos = intercalados;
+  const totalProductos = itemsCompletos.length;
+  items = itemsCompletos.slice(0, limit);
+  const inicio = (page - 1) * perPage;
+  const paginaActual = itemsCompletos.slice(inicio, inicio + perPage);
+  const hasMore = (inicio + perPage) < totalProductos;
 
   // NUNCA exponer el precio base al público
   // Forzar HTTPS en las imágenes
@@ -1302,11 +1310,18 @@ app.get('/api/public/catalog', async (req) => {
   const featuredIds = state.featured || [];
   const destacados = publicos.filter(p => featuredIds.includes(p.id));
   const resto = publicos.filter(p => !featuredIds.includes(p.id));
-  const ordenados = [...destacados, ...resto];
+  const ordenadosCompletos = [...destacados, ...resto];
+  // Aplicar paginacion tambien a la respuesta final
+  const ordenados = ordenadosCompletos.slice(inicio, inicio + perPage);
+  const totalFinal = ordenadosCompletos.length;
+  const hasMoreFinal = (inicio + perPage) < totalFinal;
 
   return {
     ok: true,
-    total: ordenados.length,
+    total: totalFinal,
+    hasMore: hasMoreFinal,
+    page: page,
+    perPage: perPage,
     featured: destacados,
     categorias,
     config: {

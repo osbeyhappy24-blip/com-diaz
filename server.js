@@ -227,6 +227,10 @@ const DEFAULTS = {
     bannerActivo: false,
     bannerTexto: '',
     bannerColor: 'gradient',
+    promociones: [
+      { id: 'p1', texto: 'Envio gratis en pedidos +$50', emoji: 'truck', color: 'green', activo: true }
+    ],
+    rotacionSeg: 5,
   },
   loginAttempts: {}, // IP -> { count, blockedUntil }
   activityLog: [], // ultimos eventos
@@ -1313,6 +1317,8 @@ app.get('/api/public/catalog', async (req) => {
       bannerActivo: state.shopConfig?.bannerActivo || false,
       bannerTexto: state.shopConfig?.bannerTexto || '',
       bannerColor: state.shopConfig?.bannerColor || 'gradient',
+      promociones: (state.shopConfig?.promociones || []).filter(p => p && p.activo !== false),
+      rotacionSeg: Number(state.shopConfig?.rotacionSeg) || 5,
     },
     products: ordenados,
   };
@@ -1399,6 +1405,8 @@ app.get('/api/public/config', async () => ({
     bannerActivo: state.shopConfig?.bannerActivo || false,
     bannerTexto: state.shopConfig?.bannerTexto || '',
     bannerColor: state.shopConfig?.bannerColor || 'gradient',
+    promociones: (state.shopConfig?.promociones || []).filter(p => p && p.activo !== false),
+    rotacionSeg: Number(state.shopConfig?.rotacionSeg) || 5,
   },
 }));
 

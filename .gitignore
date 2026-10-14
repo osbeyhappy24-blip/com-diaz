@@ -7,3 +7,6 @@ data.json.bak
 .vapid-keys.txt
 .env
 .apify-token
+backup-*.json
+state-*.json
+*.json.bak

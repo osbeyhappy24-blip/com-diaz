@@ -611,7 +611,7 @@ async function guardarEnNube() {
       // Guardar solo los ultimos 100 productos eBay (publicados) para recuperar tras reinicio
       results: (state.results || [])
         .filter(r => (state.published || []).includes(r.id))
-        .slice(0, 500)
+        .slice(0, 800)
         .map(r => ({
           id: r.id,
           title: (r.title || '').slice(0, 120),
@@ -2703,6 +2703,22 @@ app.get('/api/public/live-search-all', async (req, reply) => {
   };
 });
 
+// ═══════════════════════════════════════════════
+// FORZAR BUSQUEDA MANUAL
+// ═══════════════════════════════════════════════
+
+app.post('/api/search/run-now', async (req, reply) => {
+  try {
+    app.log.info('[MANUAL] Ejecutando runSearch...');
+    const count = await runSearch('manual-api');
+    return { ok: true, productos: count, total: (state.results || []).length };
+  } catch(e) {
+    app.log.error('[MANUAL] Error: ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 app.get('/api/public/vapid-key', async () => ({
   ok: true,
   publicKey: VAPID_PUBLIC
@@ -2938,10 +2954,13 @@ const PORT = process.env.PORT || 3000;
 // Auto-búsqueda al arrancar si no hay productos
 async function autoSearchOnStart() {
   try {
-    if (!state.results || state.results.length === 0) {
-      app.log.info('Sin productos al arrancar, buscando automaticamente...');
+    const actual = (state.results || []).length;
+    if (actual < 500) {
+      app.log.info('Solo ' + actual + ' productos en memoria. Regenerando catalogo...');
       await runSearch('auto-start');
       app.log.info('Auto-busqueda completada: ' + state.results.length + ' productos');
+    } else {
+      app.log.info('Ya hay ' + actual + ' productos, no se regenera al arrancar');
     }
   } catch (e) {
     app.log.error('Error en auto-busqueda: ' + e.message);

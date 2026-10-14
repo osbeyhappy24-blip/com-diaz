@@ -2708,16 +2708,44 @@ app.get('/api/public/live-search-all', async (req, reply) => {
 // ═══════════════════════════════════════════════
 
 app.post('/api/search/run-now', async (req, reply) => {
-  try {
-    app.log.info('[MANUAL] Ejecutando runSearch...');
-    const count = await runSearch('manual-api');
-    return { ok: true, productos: count, total: (state.results || []).length };
-  } catch(e) {
-    app.log.error('[MANUAL] Error: ' + e.message);
-    reply.code(500);
-    return { ok: false, error: e.message };
+  // Responder inmediatamente (Cloudflare corta a los 100s)
+  const running = state._searchRunning === true;
+  if (running) {
+    return { ok: true, mensaje: 'Ya hay una busqueda en curso', enCurso: true };
   }
+  state._searchRunning = true;
+  state._searchStartedAt = new Date().toISOString();
+
+  // Ejecutar en background sin bloquear la respuesta
+  (async () => {
+    try {
+      app.log.info('[MANUAL] Ejecutando runSearch en background...');
+      const count = await runSearch('manual-api');
+      app.log.info('[MANUAL] Completado: ' + count + ' productos');
+    } catch(e) {
+      app.log.error('[MANUAL] Error: ' + e.message);
+    } finally {
+      state._searchRunning = false;
+      state._searchFinishedAt = new Date().toISOString();
+    }
+  })();
+
+  return {
+    ok: true,
+    mensaje: 'Busqueda iniciada en background. Consulta /api/search/status en 1-3 min.',
+    enCurso: true
+  };
 });
+
+// Estado de la busqueda en curso
+app.get('/api/search/status', async () => ({
+  ok: true,
+  enCurso: state._searchRunning === true,
+  iniciada: state._searchStartedAt || null,
+  finalizada: state._searchFinishedAt || null,
+  productos: (state.results || []).length,
+  publicados: (state.published || []).length
+}));
 
 app.get('/api/public/vapid-key', async () => ({
   ok: true,

@@ -238,6 +238,13 @@ const DEFAULTS = {
   tesoreria: {
     movimientos: []  // lista de ingresos/egresos
   },
+  appVersion: {
+    version: 1,
+    versionName: '1.0.0',
+    url: '',
+    notas: '',
+    fecha: null
+  },
   importConfig: {
     autoImport: {
       enabled: false,
@@ -567,6 +574,7 @@ async function cargarDesdeNube() {
       if (remoto.orders) state.orders = remoto.orders;
       if (remoto.subscriptions) state.subscriptions = remoto.subscriptions;
       if (remoto.importConfig) state.importConfig = remoto.importConfig;
+      if (remoto.appVersion) state.appVersion = remoto.appVersion;
       if (remoto.tesoreria && remoto.tesoreria.movimientos) {
         state.tesoreria = state.tesoreria || { movimientos: [] };
         state.tesoreria.movimientos = remoto.tesoreria.movimientos;
@@ -641,6 +649,7 @@ async function guardarEnNube() {
       tesoreria: {
         movimientos: (state.tesoreria?.movimientos || []).slice(-500)
       },
+      appVersion: state.appVersion,
       importConfig: state.importConfig,
       visits: {
         total: state.visits?.total || 0,
@@ -2705,6 +2714,73 @@ app.get('/api/public/live-search-all', async (req, reply) => {
 // ═══════════════════════════════════════════════
 // FORZAR BUSQUEDA MANUAL
 // ═══════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════
+// AUTO-UPDATE APK
+// ═══════════════════════════════════════════════
+
+app.get('/api/app-version', async (req) => {
+  // Detectar version instalada desde User-Agent
+  const ua = String(req.headers['user-agent'] || '');
+  let installedVersion = null;
+  let isTWA = false;
+
+  // Formato: com.comdiaz.shop.twa/1
+  const m = ua.match(/com\.comdiaz\.shop\.twa\/(\d+)/);
+  if (m) {
+    installedVersion = Number(m[1]);
+    isTWA = true;
+  }
+
+  const cfg = state.appVersion || { version: 1, versionName: '1.0.0', url: '', notas: '' };
+  const needsUpdate = isTWA && installedVersion !== null && installedVersion < Number(cfg.version);
+
+  return {
+    ok: true,
+    // Info de la ultima version disponible
+    latest: {
+      version: Number(cfg.version) || 1,
+      versionName: cfg.versionName || '1.0.0',
+      url: cfg.url || '',
+      notas: cfg.notas || '',
+      fecha: cfg.fecha || null
+    },
+    // Info de la version instalada (si es APK)
+    installed: {
+      isTWA: isTWA,
+      version: installedVersion
+    },
+    needsUpdate: needsUpdate
+  };
+});
+
+app.post('/api/app-version', async (req, reply) => {
+  const body = req.body || {};
+  const version = Number(body.version);
+  const versionName = String(body.versionName || '').trim();
+  const url = String(body.url || '').trim();
+  const notas = String(body.notas || '').slice(0, 500);
+
+  if (!version || version < 1) {
+    reply.code(400);
+    return { ok: false, error: 'version debe ser un numero >= 1' };
+  }
+  if (!versionName) {
+    reply.code(400);
+    return { ok: false, error: 'Falta versionName' };
+  }
+
+  state.appVersion = {
+    version,
+    versionName,
+    url,
+    notas,
+    fecha: new Date().toISOString()
+  };
+  await save();
+  logActivity('app_version_update', { version, versionName });
+  return { ok: true, appVersion: state.appVersion };
+});
 
 app.post('/api/search/run-now', async (req, reply) => {
   // Responder inmediatamente (Cloudflare corta a los 100s)

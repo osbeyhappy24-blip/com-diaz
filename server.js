@@ -1248,16 +1248,15 @@ app.get('/api/public/catalog', async (req) => {
     porCategoria[cat].push(p);
   }
 
-  // Round-robin: tomar 1 de cada categoria a la vez
+  // Round-robin: intercalar TODOS los items (no cortar por limit)
   const catsIntercalado = Object.keys(porCategoria);
   const intercalados = [];
   let idx = 0;
   let sigueHab = true;
 
-  while (intercalados.length < limit && sigueHab) {
+  while (sigueHab) {
     sigueHab = false;
     for (const cat of catsIntercalado) {
-      if (intercalados.length >= limit) break;
       const lista = porCategoria[cat];
       if (idx < lista.length) {
         intercalados.push(lista[idx]);

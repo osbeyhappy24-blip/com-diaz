@@ -630,7 +630,7 @@ async function guardarEnNube() {
         publishTimes: state.automation.publishTimes,
       },
       sources: state.sources,
-      published: (state.published || []).slice(0, 2000),
+      published: (state.published || []).slice(0, 3000),
       // Guardar solo los ultimos 100 productos eBay (publicados) para recuperar tras reinicio
       results: (state.results || [])
         .filter(r => (state.published || []).includes(r.id))
@@ -731,6 +731,9 @@ async function runSearch(trigger = 'manual') {
     return true;
   });
   state.results = unique;
+  // Publicar automaticamente los resultados de la busqueda
+  state.published = unique.map(r => r.id);
+  app.log.info('Publicados automaticamente: ' + state.published.length);
   // Publicación automática (si está activada)
   if (state.shopConfig?.publicarAutomatico) {
     state.published = unique.map(r => r.id);

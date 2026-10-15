@@ -1318,6 +1318,8 @@ app.get('/api/public/catalog', async (req) => {
     return {
       id: p.id,
       title: p.title,
+      aiTitulo: p.aiTitulo || null,
+      aiDescripcion: p.aiDescripcion || null,
       image: img,
       images: imgs,
       salePrice: p.salePrice,

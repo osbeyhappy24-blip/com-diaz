@@ -638,6 +638,8 @@ async function guardarEnNube() {
         .map(r => ({
           id: r.id,
           title: (r.title || '').slice(0, 120),
+          aiTitulo: r.aiTitulo || null,
+          aiDescripcion: r.aiDescripcion || null,
           image: r.image,
           salePrice: r.salePrice,
           category: r.category,

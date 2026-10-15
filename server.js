@@ -101,6 +101,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/api/public/')) return;
   if (req.url.startsWith('/ebay-notification')) return;
   if (req.url.startsWith('/api/pin/change')) return;
+  if (req.url.startsWith('/api/app-version') && req.method === 'GET') return;
   const expected = state.pin;
   if (!expected) { reply.code(503).send({ ok: false, error: 'Servicio no configurado' }); return; }
 

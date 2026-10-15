@@ -10,7 +10,8 @@ import crypto from 'crypto';
 import { SOURCES, DEFAULT_SOURCE_STATE, listSources } from './sources.js';
 import { notifyTelegram } from './telegram.js';
 import { subirImagen } from './imgbb.js';
-import { leerEstado, guardarEstado, isJSONBinConfigured } from './jsonbin.js';
+// Migrado de jsonbin.js -> state-store.js (GitHub Storage)
+import { leerEstado, guardarEstado, isJSONBinConfigured } from './state-store.js';
 import { preguntarIA } from './ai.js';
 import { ApifyClient } from 'apify-client';
 import { initApify, isApifyReady, searchSource, buildProductsForShop, SOURCES_CONFIG } from './import.js';

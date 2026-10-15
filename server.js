@@ -11,6 +11,7 @@ import { SOURCES, DEFAULT_SOURCE_STATE, listSources } from './sources.js';
 import { notifyTelegram } from './telegram.js';
 import { subirImagen } from './imgbb.js';
 import { leerEstado, guardarEstado, isJSONBinConfigured } from './jsonbin.js';
+import { preguntarIA } from './ai.js';
 import { ApifyClient } from 'apify-client';
 import { initApify, isApifyReady, searchSource, buildProductsForShop, SOURCES_CONFIG } from './import.js';
 import webpush from 'web-push';
@@ -1413,6 +1414,37 @@ app.post('/api/unpublish/:id', async (req) => {
 });
 
 // GET con auth: ver IDs publicados
+// POST con auth: la IA sugiere titulo y descripcion (no guarda nada)
+let iaOcupada = false;
+app.post('/api/ai/descripcion', async (req, reply) => {
+  const id = String((req.body || {}).id || '');
+  const p = (state.results || []).find(r => r.id === id) ||
+            (state.productosManuales || []).find(r => r.id === id);
+  if (!p) { reply.code(404); return { ok: false, error: 'Producto no encontrado' }; }
+  if (iaOcupada) { reply.code(429); return { ok: false, error: 'La IA esta ocupada, intenta de nuevo' }; }
+  iaOcupada = true;
+  try {
+    const prompt = 'Eres redactor de una tienda en linea que vende a clientes en Cuba. ' +
+      'Mejora este producto. Devuelve SOLO un JSON con dos campos: ' +
+      '"titulo" (maximo 70 caracteres, claro, en espanol, sin emojis ni mayusculas excesivas) y ' +
+      '"descripcion" (2 o 3 frases, maximo 400 caracteres, sin inventar medidas, marcas ni caracteristicas que no esten en los datos). ' +
+      'Datos del producto. Titulo original: ' + String(p.title || '').slice(0, 200) +
+      '. Categoria: ' + String(p.category || p.source || '') + '.';
+    const txt = await preguntarIA(prompt, { json: true });
+    const out = JSON.parse(String(txt).replace(/```json|```/g, '').trim());
+    return {
+      ok: true, id,
+      titulo: String(out.titulo || '').slice(0, 120),
+      descripcion: String(out.descripcion || '').slice(0, 600),
+    };
+  } catch (e) {
+    reply.code(502);
+    return { ok: false, error: e.message };
+  } finally {
+    iaOcupada = false;
+  }
+});
+
 app.get('/api/published', async () => ({
   ok: true,
   total: (state.published || []).length,

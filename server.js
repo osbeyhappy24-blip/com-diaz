@@ -3318,6 +3318,7 @@ cargarDesdeNube().then(() => {
   console.log(`Publicaciones: ${state.automation.publishTimes.join(' · ')}`);
   console.log(`Estado: ${state.automation.running ? 'ACTIVO' : 'EN PAUSA'}\n`);
   schedule();
+  scheduleIA();
   setTimeout(autoSearchOnStart, 5000);
 });
 });

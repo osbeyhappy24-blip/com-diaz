@@ -1445,6 +1445,30 @@ app.post('/api/ai/descripcion', async (req, reply) => {
   }
 });
 
+app.post('/api/ai/save', async (req, reply) => {
+  const body = req.body || {};
+  const id = String(body.id || '');
+  const aiTitulo = String(body.titulo || '').slice(0, 120);
+  const aiDescripcion = String(body.descripcion || '').slice(0, 600);
+  if (!id || (!aiTitulo && !aiDescripcion)) {
+    reply.code(400);
+    return { ok: false, error: 'Faltan id, titulo o descripcion' };
+  }
+  // Buscar en results o en productosManuales
+  const enResults = (state.results || []).find(r => r.id === id);
+  const enManuales = (state.productosManuales || []).find(r => r.id === id);
+  const p = enResults || enManuales;
+  if (!p) {
+    reply.code(404);
+    return { ok: false, error: 'Producto no encontrado' };
+  }
+  p.aiTitulo = aiTitulo;
+  p.aiDescripcion = aiDescripcion;
+  p.aiUpdatedAt = new Date().toISOString();
+  await save();
+  return { ok: true, id };
+});
+
 app.get('/api/published', async () => ({
   ok: true,
   total: (state.published || []).length,

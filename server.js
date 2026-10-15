@@ -634,7 +634,7 @@ async function guardarEnNube() {
       // Guardar solo los ultimos 100 productos eBay (publicados) para recuperar tras reinicio
       results: (state.results || [])
         .filter(r => (state.published || []).includes(r.id))
-        .slice(0, 800)
+        .slice(0, 3000)
         .map(r => ({
           id: r.id,
           title: (r.title || '').slice(0, 120),

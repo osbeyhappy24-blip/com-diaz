@@ -732,10 +732,14 @@ async function runSearch(trigger = 'manual') {
     seen.add(p.id);
     return true;
   });
-  state.results = unique;
-  // Publicar automaticamente los resultados de la busqueda
-  state.published = unique.map(r => r.id);
-  app.log.info('Publicados automaticamente: ' + state.published.length);
+  // SOLO sobrescribir si hay resultados nuevos (evita borrar catalogo por error)
+  if (unique && unique.length > 0) {
+    state.results = unique;
+    state.published = unique.map(r => r.id);
+    app.log.info('Resultados guardados: ' + unique.length + ' | Publicados: ' + state.published.length);
+  } else {
+    app.log.warn('runSearch devolvio 0 productos - NO se sobrescribe state.results (proteccion)');
+  }
   // Publicación automática (si está activada)
   if (state.shopConfig?.publicarAutomatico) {
     state.published = unique.map(r => r.id);
@@ -3135,7 +3139,7 @@ const PORT = process.env.PORT || 3000;
 async function autoSearchOnStart() {
   try {
     const actual = (state.results || []).length;
-    if (actual < 500) {
+    if (actual < 500 && (state.published || []).length < 500) {
       app.log.info('Solo ' + actual + ' productos en memoria. Regenerando catalogo...');
       await runSearch('auto-start');
       app.log.info('Auto-busqueda completada: ' + state.results.length + ' productos');

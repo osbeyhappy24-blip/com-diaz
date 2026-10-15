@@ -897,6 +897,100 @@ function schedule() {
   save();
 }
 
+// ═══════════════════════════════════════════════
+// PROCESAMIENTO AUTOMATICO DE IA (cron cada 6h)
+// ═══════════════════════════════════════════════
+
+let iaTask = null;
+let iaProcesando = false;
+
+async function procesarProductosSinIA(max = 100) {
+  if (iaProcesando) {
+    app.log.info('[IA-AUTO] Ya hay un proceso en curso, saltando');
+    return { procesados: 0, saltado: true };
+  }
+  iaProcesando = true;
+  const inicio = Date.now();
+  let procesados = 0;
+  let errores = 0;
+
+  try {
+    const todos = [...(state.results || []), ...(state.productosManuales || [])];
+    const sinIA = todos.filter(p => !p.aiTitulo && p.title).slice(0, max);
+    app.log.info('[IA-AUTO] Pendientes sin IA: ' + sinIA.length + ' (max ' + max + ')');
+
+    for (let i = 0; i < sinIA.length; i++) {
+      const p = sinIA[i];
+      try {
+        const prompt = 'Eres redactor de una tienda en linea que vende a clientes en Cuba. ' +
+          'Mejora este producto. Devuelve SOLO un JSON con dos campos: ' +
+          '"titulo" (maximo 70 caracteres, claro, en espanol, sin emojis ni mayusculas excesivas) y ' +
+          '"descripcion" (2 o 3 frases, maximo 400 caracteres, sin inventar medidas, marcas ni caracteristicas que no esten en los datos). ' +
+          'Datos del producto. Titulo original: ' + String(p.title || '').slice(0, 200) +
+          '. Categoria: ' + String(p.category || p.source || '') + '.';
+
+        const txt = await preguntarIA(prompt, { json: true });
+        const out = JSON.parse(String(txt).replace(/```json|```/g, '').trim());
+
+        // Buscar el producto por ID en ambas listas y actualizar
+        const enResults = (state.results || []).find(r => r.id === p.id);
+        const enManuales = (state.productosManuales || []).find(r => r.id === p.id);
+        const ref = enResults || enManuales;
+        if (ref) {
+          ref.aiTitulo = String(out.titulo || '').slice(0, 120);
+          ref.aiDescripcion = String(out.descripcion || '').slice(0, 600);
+          ref.aiUpdatedAt = new Date().toISOString();
+          procesados++;
+        }
+
+        // Guardar cada 10 productos (para no saturar GitHub)
+        if (procesados > 0 && procesados % 10 === 0) {
+          await save();
+        }
+
+        // Rate limit: ~13 req/min (2 keys rotando)
+        await new Promise(s => setTimeout(s, 4000));
+      } catch (e) {
+        errores++;
+        app.log.error('[IA-AUTO] Error en ' + p.id + ': ' + e.message);
+        // Si hay muchos errores seguidos, esperar
+        if (errores >= 5 && errores % 5 === 0) {
+          app.log.warn('[IA-AUTO] 5 errores, esperando 60s...');
+          await new Promise(s => setTimeout(s, 60000));
+        }
+      }
+    }
+
+    // Guardar cambios finales
+    if (procesados > 0) await save();
+
+    const dur = Math.round((Date.now() - inicio) / 1000);
+    app.log.info('[IA-AUTO] Completado: ' + procesados + ' procesados, ' + errores + ' errores, ' + dur + 's');
+    logActivity('ia_auto', { procesados, errores, dur });
+
+    state.iaLastRun = new Date().toISOString();
+    state.iaLastProcessed = procesados;
+    return { procesados, errores, dur };
+  } finally {
+    iaProcesando = false;
+  }
+}
+
+function scheduleIA() {
+  if (iaTask) iaTask.stop();
+  // Cada 6 horas: 00:00, 06:00, 12:00, 18:00
+  iaTask = cron.schedule('0 */6 * * *', async () => {
+    app.log.info('[IA-AUTO] Cron cada 6h disparado');
+    try {
+      await procesarProductosSinIA(100);
+    } catch (e) {
+      app.log.error('[IA-AUTO] Error en cron: ' + e.message);
+    }
+  }, { timezone: APP_TZ });
+  app.log.info('[IA-AUTO] Cron configurado cada 6h (timezone ' + APP_TZ + ')');
+  state.iaNextRun = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
+}
+
 
 // Endpoint público para healthcheck (UptimeRobot, Pingdom, etc.)
 app.get('/health', async () => ({ ok: true, service: 'comdiaz', ts: Date.now() }));
@@ -1530,6 +1624,18 @@ app.get('/api/ai/status', async (req) => {
     keys,
     ultimos
   };
+});
+
+// Endpoint manual para procesar productos sin IA ahora mismo
+app.post('/api/ai/process-pending', async (req, reply) => {
+  const max = Math.min(Math.max(Number(req.body?.max) || 50, 1), 200);
+  try {
+    const r = await procesarProductosSinIA(max);
+    return { ok: true, ...r };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
 });
 
 app.get('/api/published', async () => ({

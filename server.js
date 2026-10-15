@@ -1915,6 +1915,138 @@ app.post('/api/upload-image', async (req, reply) => {
 // GENERADOR DE PUBLICACIONES PARA REDES
 // ═══════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════
+// PUBLICACIONES CON IA (nuevo endpoint - usa Gemini)
+// ═══════════════════════════════════════════════
+
+app.post('/api/posts/generate-ai', async (req, reply) => {
+  const body = req.body || {};
+  const tipo = String(body.tipo || 'oferta').trim();
+  const ref = String(body.ref || '').trim() || 'directo';
+  const cfg = state.shopConfig || {};
+  const wa = cfg.whatsapp || '5351425691';
+  const shopUrl = 'https://com-diaz-web.onrender.com/shop.html?ref=' + encodeURIComponent(ref);
+
+  // Productos publicos
+  const manuales = (state.productosManuales || []).filter(p => p.publicado !== false);
+  const ebay = (state.results || [])
+    .filter(r => (state.published || []).includes(r.id))
+    .map(r => ({
+      id: r.id,
+      title: r.aiTitulo || r.title,
+      titleOriginal: r.title,
+      salePrice: r.salePrice,
+      category: r.category,
+      source: r.source || 'ebay',
+      url: r.url,
+      aiDescripcion: r.aiDescripcion
+    }));
+  const todos = manuales.concat(ebay).filter(p => p.salePrice > 0 && p.title);
+  if (!todos.length) { reply.code(400); return { ok: false, error: 'No hay productos' }; }
+
+  function pick(arr, n) {
+    const copy = [...arr];
+    const out = [];
+    for (let i = 0; i < n && copy.length; i++) {
+      out.push(copy.splice(Math.floor(Math.random() * copy.length), 1)[0]);
+    }
+    return out;
+  }
+
+  // Elegir productos segun tipo
+  let lista = [];
+  let contexto = '';
+  if (tipo === 'oferta') {
+    lista = pick(todos, 1);
+    contexto = 'Publicacion de OFERTA DEL DIA. Destaca 1 solo producto. Titulo llamativo con emojis 🔥⚡. Crea urgencia ("solo por hoy", "ultimas unidades").';
+  } else if (tipo === 'novedades') {
+    lista = todos.slice(0, 5);
+    contexto = 'Publicacion de NOVEDADES recien llegadas. Anuncia los 5 productos como nuevos en la tienda. Tono entusiasta con ✨🆕.';
+  } else if (tipo === 'destacados') {
+    lista = pick(todos, 5);
+    contexto = 'Publicacion de PRODUCTOS DESTACADOS de la semana. Los 5 mejores con ⭐🔥. Tono premium.';
+  } else if (tipo === 'promocion') {
+    const promos = (cfg.promociones || []).filter(p => p && p.activo !== false);
+    const promoTexto = promos.length
+      ? promos.map(p => p.texto).join(' | ')
+      : (cfg.bannerTexto || 'Ofertas especiales');
+    lista = pick(todos, 3);
+    contexto = 'Publicacion de PROMOCION. Menciona la promo: "' + promoTexto + '". Incluye 3 productos de ejemplo. Tono 🎁🎉.';
+  } else {
+    reply.code(400);
+    return { ok: false, error: 'tipo invalido (oferta|novedades|destacados|promocion)' };
+  }
+
+  // Prompt para Gemini
+  const listaTexto = lista.map((p, i) =>
+    (i+1) + '. ' + p.title.slice(0, 100) + ' - $' + Number(p.salePrice).toFixed(2) +
+    (p.category ? ' (' + p.category + ')' : '')
+  ).join('\n');
+
+  const prompt = `Eres community manager de "Comdiaz Shop", una tienda en linea cubana que vende productos importados y locales con envio a toda Cuba.
+
+Genera una publicacion para grupos de WhatsApp y Facebook siguiendo estas reglas ESTRICTAS:
+
+TIPO: ${contexto}
+
+PRODUCTOS A INCLUIR:
+${listaTexto}
+
+REGLAS DEL TEXTO:
+- Idioma: espanol cubano, tono cercano pero profesional
+- Longitud: maximo 300 palabras (WhatsApp tiene limite)
+- NO uses hashtags (no funcionan en grupos cubanos)
+- SI usa emojis con moderacion (max 8-10 en total)
+- Formato optimizado para movil: lineas cortas, espacios entre bloques
+- Titulo llamativo en la primera linea (MAYUSCULAS + emoji)
+- Cada producto: nombre, precio en USD ($X.XX), categoria
+- Cierra con llamada a la accion clara y los enlaces:
+
+📲 Pedidos por WhatsApp: https://wa.me/${wa}
+🌐 Catalogo completo: ${shopUrl}
+🚚 Envio a toda Cuba · Pago al recibir
+
+IMPORTANTE:
+- NO inventes productos ni precios (usa SOLO los que te di)
+- NO prometas envios gratis si no lo dice el contexto
+- El texto debe estar listo para COPIAR Y PEGAR tal cual`;
+
+  try {
+    const inicio = Date.now();
+    const txt = await preguntarIA(prompt);
+    const dur = Date.now() - inicio;
+
+    const texto = String(txt || '').trim();
+    if (!texto || texto.length < 50) {
+      throw new Error('Respuesta IA muy corta');
+    }
+
+    // Extraer titulo (primera linea no vacia)
+    const lineas = texto.split('\n').filter(l => l.trim());
+    const titulo = lineas[0] ? lineas[0].slice(0, 80) : 'Publicacion';
+
+    logActivity('post_ia', { tipo, ref, dur, longitud: texto.length });
+
+    return {
+      ok: true,
+      tipo,
+      ref,
+      titulo,
+      texto,
+      productos: lista.map(p => ({ id: p.id, title: p.title, salePrice: p.salePrice })),
+      link: shopUrl,
+      whatsapp: wa,
+      longitud: texto.length,
+      generadoPor: 'ia',
+      durMs: dur
+    };
+  } catch(e) {
+    app.log.error('Error IA posts: ' + e.message);
+    reply.code(502);
+    return { ok: false, error: 'IA no disponible: ' + e.message + '. Usa el generador normal.' };
+  }
+});
+
 app.post('/api/posts/generate', async (req, reply) => {
   const body = req.body || {};
   const tipo = String(body.tipo || 'oferta').trim();

@@ -87,11 +87,12 @@ app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, 
 
 
 // ---- Auth por API Key ----
+const failMap = new Map();
+const MAX_FAILS = 8, FAIL_WINDOW = 15 * 60 * 1000;
+
 app.addHook('onRequest', async (req, reply) => {
-  // Solo exige auth en /api/* (deja pasar el root y OPTIONS)
   if (!req.url.startsWith('/api/')) return;
   if (req.method === 'OPTIONS') return;
-  // EXCEPCIÓN: /api/auth no requiere clave (es la que la valida)
   if (req.url.startsWith('/api/auth')) return;
   if (req.url.startsWith('/api/track-visit')) return;
   if (req.url.startsWith('/api/track-order')) return;
@@ -99,9 +100,22 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/ebay-notification')) return;
   if (req.url.startsWith('/api/pin/change')) return;
   const expected = state.pin;
-  if (!expected) { reply.code(503).send({ ok: false, error: "Servicio no configurado" }); return; }
-  const got = req.headers['x-comdiaz-key'] || req.query?.k;
-  if (got !== expected) {
+  if (!expected) { reply.code(503).send({ ok: false, error: 'Servicio no configurado' }); return; }
+
+  const ip = getClientIP(req);
+  const now = Date.now();
+  const f = failMap.get(ip);
+  if (f && now < f.resetAt && f.count >= MAX_FAILS) {
+    reply.code(429).send({ ok: false, error: 'Demasiados intentos. Espera unos minutos.' });
+    return;
+  }
+
+  const got = String(req.headers['x-comdiaz-key'] || req.query?.k || '');
+  const a = Buffer.from(got), b = Buffer.from(String(expected));
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    const cur = (f && now < f.resetAt) ? f : { count: 0, resetAt: now + FAIL_WINDOW };
+    cur.count++;
+    failMap.set(ip, cur);
     reply.code(401).send({ ok: false, error: 'No autorizado' });
   }
 });
@@ -1292,7 +1306,7 @@ app.get('/api/public/catalog', async (req) => {
     return 'https://wsrv.nl/?url=' + encodeURIComponent(clean) + '&w=500&output=webp&q=80';
   }
 
-  const publicos = items.map(p => {
+  const publicos = itemsCompletos.map(p => {
     const img = proxearImagen(p.image);
     const imgs = (p.images || [p.image].filter(Boolean))
       .map(u => proxearImagen(u))

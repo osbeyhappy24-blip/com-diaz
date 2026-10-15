@@ -1481,6 +1481,57 @@ app.post('/api/ai/save', async (req, reply) => {
   return { ok: true, id };
 });
 
+// ═══════════════════════════════════════════════
+// ESTADO DE LA IA - Monitoreo
+// ═══════════════════════════════════════════════
+
+app.get('/api/ai/status', async (req) => {
+  const results = state.results || [];
+  const manuales = state.productosManuales || [];
+  const todos = [...results, ...manuales];
+
+  const conIA = todos.filter(p => p.aiTitulo && p.aiDescripcion).length;
+  const sinIA = todos.length - conIA;
+  const progreso = todos.length > 0 ? +(conIA / todos.length * 100).toFixed(2) : 0;
+
+  // Ultimos 10 productos con IA
+  const ultimos = todos
+    .filter(p => p.aiUpdatedAt)
+    .sort((a, b) => (b.aiUpdatedAt || '').localeCompare(a.aiUpdatedAt || ''))
+    .slice(0, 10)
+    .map(p => ({
+      id: p.id,
+      tituloOriginal: (p.title || '').slice(0, 50),
+      tituloIA: (p.aiTitulo || '').slice(0, 60),
+      generadoEn: p.aiUpdatedAt
+    }));
+
+  // Contar generadas en la ultima hora
+  const hace1h = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const ultimaHora = todos.filter(p => (p.aiUpdatedAt || '') >= hace1h).length;
+
+  // Estado de las keys
+  let keys = [];
+  try {
+    const aiModule = await import('./ai.js');
+    if (typeof aiModule.infoKeys === 'function') {
+      keys = aiModule.infoKeys();
+    }
+  } catch(e) {}
+
+  return {
+    ok: true,
+    total: todos.length,
+    conIA,
+    sinIA,
+    progreso,
+    ultimaHora,
+    modelo: process.env.GEMINI_MODEL || 'no configurado',
+    keys,
+    ultimos
+  };
+});
+
 app.get('/api/published', async () => ({
   ok: true,
   total: (state.published || []).length,

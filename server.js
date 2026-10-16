@@ -758,9 +758,16 @@ function mergeProducts(existentes, nuevos) {
       if (prev.aiTitulo) iaPreservada++;
     } else {
       map.set(n.id, {
-        ...n, primeraVez: hoy, ultimaVez: hoy, vecesVisto: 1,
-        activo: true, prioridad: 'nuevo',
-        aiTitulo: null, aiDescripcion: null, aiUpdatedAt: null,
+        ...n,
+        primeraVez: n.primeraVez || hoy,
+        ultimaVez: hoy,
+        vecesVisto: (n.vecesVisto || 1),
+        activo: n.activo !== false,
+        prioridad: n.prioridad || 'nuevo',
+        // PRESERVAR IA del objeto entrante (al cargar de GitHub)
+        aiTitulo: n.aiTitulo || null,
+        aiDescripcion: n.aiDescripcion || null,
+        aiUpdatedAt: n.aiUpdatedAt || null,
       });
       nuevosCount++;
     }

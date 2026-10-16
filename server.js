@@ -219,6 +219,25 @@ const DEFAULT_CATEGORIES = [
   { label: '💊 Salud y Bienestar',              dummyjson: ['vitamins', 'supplements', 'first-aid', 'medical-supplies'] },
 ];
 
+const CUBA_UBICACIONES = {
+  "Pinar del Río": ["Consolación del Sur","Guane","La Palma","Los Palacios","Mantua","Minas de Matahambre","Pinar del Río","San Juan y Martínez","San Luis","Sandino","Viñales"],
+  "Artemisa": ["Alquízar","Artemisa","Bauta","Caimito","Candelaria","Guanajay","Güira de Melena","Mariel","San Antonio de los Baños","San Cristóbal","Bahía Honda"],
+  "La Habana": ["Arroyo Naranjo","Boyeros","Centro Habana","Cerro","Cotorro","Diez de Octubre","Guanabacoa","Habana del Este","Habana Vieja","La Lisa","Marianao","Playa","Plaza de la Revolución","Regla","San Miguel del Padrón"],
+  "Mayabeque": ["Batabanó","Bejucal","Güines","Jaruco","Madruga","Melena del Sur","Nueva Paz","Quivicán","San José de las Lajas","San Nicolás","Santa Cruz del Norte"],
+  "Matanzas": ["Calimete","Cárdenas","Ciénaga de Zapata","Colón","Jagüey Grande","Jovellanos","Limonar","Los Arabos","Martí","Matanzas","Pedro Betancourt","Perico","Unión de Reyes"],
+  "Villa Clara": ["Caibarién","Camajuaní","Cifuentes","Corralillo","Encrucijada","Manicaragua","Placetas","Quemado de Güines","Ranchuelo","Remedios","Sagua la Grande","Santa Clara","Santo Domingo"],
+  "Cienfuegos": ["Abreus","Aguada de Pasajeros","Cienfuegos","Cruces","Cumanayagua","Lajas","Palmira","Rodas"],
+  "Sancti Spíritus": ["Cabaiguán","Fomento","Jatibonico","La Sierpe","Sancti Spíritus","Taguasco","Trinidad","Yaguajay"],
+  "Ciego de Ávila": ["Baraguá","Bolivia","Chambas","Ciego de Ávila","Ciro Redondo","Florencia","Majagua","Morón","Primero de Enero","Venezuela"],
+  "Camagüey": ["Camagüey","Carlos Manuel de Céspedes","Esmeralda","Florida","Guáimaro","Jimaguayú","Minas","Najasa","Nuevitas","Santa Cruz del Sur","Sibanicú","Sierra de Cubitas","Vertientes"],
+  "Las Tunas": ["Amancio","Colombia","Jesús Menéndez","Jobabo","Las Tunas","Majibacoa","Manatí","Puerto Padre"],
+  "Holguín": ["Antilla","Báguanos","Banes","Cacocum","Calixto García","Cueto","Frank País","Gibara","Holguín","Mayarí","Moa","Rafael Freyre","Sagua de Tánamo","Urbano Noris"],
+  "Granma": ["Bartolomé Masó","Bayamo","Buey Arriba","Campechuela","Cauto Cristo","Guisa","Jiguaní","Manzanillo","Media Luna","Niquero","Pilón","Río Cauto","Yara"],
+  "Santiago de Cuba": ["Contramaestre","Guamá","Mella","Palma Soriano","San Luis","Santiago de Cuba","Segundo Frente","Songo-La Maya","Tercer Frente"],
+  "Guantánamo": ["Baracoa","Caimanera","El Salvador","Guantánamo","Imías","Maisí","Manuel Tames","Niceto Pérez","San Antonio del Sur","Yateras"],
+  "Isla de la Juventud": ["Isla de la Juventud"]
+};
+
 const DEFAULTS = {
   automation: {
     running: false,
@@ -2082,40 +2101,110 @@ app.post('/api/shop-config', async (req) => {
 // ═══════════════════════════════════════════════
 
 // GET con auth: lista los productos manuales
-app.get('/api/manual/products', async () => ({
+app.get('/api/manual/products', async (req) => {
+  let lista = state.productosManuales || [];
+  const q = req.query || {};
+  if (q.tipo) lista = lista.filter(p => (p.tipo || p.source || 'manual') === q.tipo);
+  if (q.provincia) lista = lista.filter(p => p.provincia === q.provincia);
+  if (q.municipio) lista = lista.filter(p => p.municipio === q.municipio);
+  if (q.source) lista = lista.filter(p => p.source === q.source);
+  return {
+    ok: true,
+    total: lista.length,
+    totalGlobal: (state.productosManuales || []).length,
+    products: lista,
+  };
+});
+
+// GET público: lista de provincias y municipios de Cuba
+app.get('/api/provincias', async () => ({
   ok: true,
-  total: (state.productosManuales || []).length,
-  products: state.productosManuales || [],
+  provincias: CUBA_UBICACIONES,
 }));
 
 // POST con auth: agregar producto manual
 app.post('/api/manual/products', async (req) => {
   const body = req.body || {};
-  if (!body.title || !body.image || !body.priceBase) {
-    return { ok: false, error: 'Faltan: title, image, priceBase' };
-  }
-  const margenPct = Number(body.margenPct) || state.margin || 35;
+  // Validaciones mínimas
+  if (!body.title) return { ok: false, error: 'Falta: title' };
+  const imagenes = Array.isArray(body.images) && body.images.length
+    ? body.images.slice(0, 8).map(u => String(u).slice(0, 500))
+    : (body.image ? [String(body.image).slice(0, 500)] : []);
+  if (!imagenes.length) return { ok: false, error: 'Falta: al menos 1 imagen' };
+
+  const esLocal = (body.tipo === 'local') || (body.source === 'local');
   const priceBase = Number(body.priceBase) || 0;
-  const salePrice = +(priceBase * (1 + margenPct / 100)).toFixed(2);
+  const margenPct = Number(body.margenPct) || state.margin || 35;
+  const precioDirecto = !!body.precioDirecto;
+
+  if (priceBase <= 0 && !body.precioUSD) {
+    return { ok: false, error: 'Falta: priceBase o precioUSD' };
+  }
+
+  // Precio de venta: si precioDirecto, usar el valor dado; si no, aplicar margen
+  let salePrice;
+  if (precioDirecto && body.precioUSD) {
+    salePrice = +Number(body.precioUSD).toFixed(2);
+  } else if (esLocal && body.precioUSD) {
+    salePrice = +Number(body.precioUSD).toFixed(2);
+  } else {
+    salePrice = +(priceBase * (1 + margenPct / 100)).toFixed(2);
+  }
+
+  // Validar ubicación si es local
+  let provincia = null, municipio = null;
+  if (esLocal) {
+    provincia = body.provincia ? String(body.provincia).slice(0, 60) : null;
+    municipio = body.municipio ? String(body.municipio).slice(0, 60) : null;
+    if (provincia && !CUBA_UBICACIONES[provincia]) {
+      return { ok: false, error: 'Provincia inválida: ' + provincia };
+    }
+    if (provincia && municipio && CUBA_UBICACIONES[provincia] && !CUBA_UBICACIONES[provincia].includes(municipio)) {
+      return { ok: false, error: 'Municipio inválido para ' + provincia + ': ' + municipio };
+    }
+  }
+
+  const estado = esLocal
+    ? (['nuevo','usado','reacondicionado'].includes(body.estado) ? body.estado : 'nuevo')
+    : null;
 
   const producto = {
-    id: 'manual-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+    id: (esLocal ? 'local-' : 'manual-') + Date.now() + '-' + Math.floor(Math.random() * 1000),
+    // Campos universales
     title: String(body.title).slice(0, 200),
-    image: body.image,
-    images: Array.isArray(body.images) ? body.images.slice(0, 5) : [body.image],
-    category: String(body.category || 'Local').slice(0, 80),
-    description: String(body.description || '').slice(0, 1000),
-    priceBase: priceBase,
+    image: imagenes[0],
+    imagePrincipal: imagenes[0],
+    images: imagenes,
+    category: String(body.category || (esLocal ? 'Local' : 'Manual')).slice(0, 80),
+    description: String(body.description || '').slice(0, 2000),
+    // Precios
+    priceBase: priceBase || null,
     salePrice: salePrice,
     margenPct: margenPct,
+    precioUSD: body.precioUSD ? +Number(body.precioUSD).toFixed(2) : null,
+    precioCUP: body.precioCUP ? +Number(body.precioCUP).toFixed(2) : null,
+    precioDirecto: precioDirecto,
+    // Stock
     cantidad: Number(body.cantidad) || 1,
+    // Ubicación (solo locales)
+    tipo: esLocal ? 'local' : (body.tipo || 'manual'),
+    provincia: provincia,
+    municipio: municipio,
+    estado: estado,
+    // Notas internas (no se exponen al público)
+    notas: body.notas ? String(body.notas).slice(0, 500) : null,
+    // Flags
     publicado: body.publicado !== false,
-    source: 'manual',
+    destacado: !!body.destacado,
+    // Meta
+    source: esLocal ? 'local' : 'manual',
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
+
   state.productosManuales = state.productosManuales || [];
   state.productosManuales.unshift(producto);
-  logActivity('manual_add', { id: producto.id, title: producto.title });
+  logActivity('manual_add', { id: producto.id, title: producto.title, tipo: producto.tipo });
   await save();
   return { ok: true, product: producto };
 });
@@ -3840,6 +3929,74 @@ app.get('/api/featured', async () => ({
   total: (state.featured || []).length,
   ids: state.featured || [],
 }));
+
+// ═══ PÚBLICO: catálogo de productos locales ═══
+app.get('/api/public/local', async (req) => {
+  const q = req.query || {};
+  let lista = (state.productosManuales || []).filter(p =>
+    p.publicado !== false && p.tipo === 'local' && p.activo !== false
+  );
+  if (q.provincia) lista = lista.filter(p => p.provincia === q.provincia);
+  if (q.municipio) lista = lista.filter(p => p.municipio === q.municipio);
+  if (q.categoria) lista = lista.filter(p => (p.category || '') === q.categoria);
+  if (q.estado) lista = lista.filter(p => p.estado === q.estado);
+  if (q.buscar) {
+    const term = String(q.buscar).toLowerCase();
+    lista = lista.filter(p => (p.title || '').toLowerCase().includes(term));
+  }
+  if (q.destacados === '1') lista = lista.filter(p => p.destacado);
+
+  // Proyección pública: SIN priceBase, SIN margenPct, SIN notas, SIN whatsapp
+  const proyeccion = lista.map(p => ({
+    id: p.id,
+    title: p.title,
+    image: p.image,
+    images: p.images || [p.image],
+    category: p.category,
+    description: p.description || '',
+    salePrice: p.salePrice,
+    precioCUP: p.precioCUP || null,
+    provincia: p.provincia || null,
+    municipio: p.municipio || null,
+    estado: p.estado || 'nuevo',
+    cantidad: p.cantidad || 1,
+    destacado: !!p.destacado,
+    createdAt: p.createdAt,
+  }));
+
+  return {
+    ok: true,
+    total: proyeccion.length,
+    productos: proyeccion,
+  };
+});
+
+// ═══ PÚBLICO: filtros disponibles para locales ═══
+app.get('/api/public/local/filtros', async () => {
+  const lista = (state.productosManuales || []).filter(p =>
+    p.publicado !== false && p.tipo === 'local' && p.activo !== false
+  );
+  const provincias = {};
+  const categorias = new Set();
+  for (const p of lista) {
+    if (p.provincia) {
+      provincias[p.provincia] = provincias[p.provincia] || new Set();
+      if (p.municipio) provincias[p.provincia].add(p.municipio);
+    }
+    if (p.category) categorias.add(p.category);
+  }
+  // Convertir Sets a arrays
+  const provinciasOut = {};
+  for (const prov in provincias) {
+    provinciasOut[prov] = [...provincias[prov]].sort();
+  }
+  return {
+    ok: true,
+    provincias: provinciasOut,
+    categorias: [...categorias].sort(),
+    total: lista.length,
+  };
+});
 
 const PORT = process.env.PORT || 3000;
 

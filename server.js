@@ -600,11 +600,8 @@ async function cargarDesdeNube() {
         state.tesoreria.movimientos = remoto.tesoreria.movimientos;
       }
       if (remoto.results && Array.isArray(remoto.results) && remoto.results.length > 0) {
-        // Solo recuperar si no tenemos resultados locales (evita perder los frescos)
-        if (!state.results || state.results.length === 0) {
-          state.results = remoto.results;
-          app.log.info('Recuperados ' + remoto.results.length + ' productos eBay de JSONBin');
-        }
+        state.results = mergeProducts(state.results || [], remoto.results);
+        app.log.info('Merge ' + remoto.results.length + ' desde JSONBin -> total ' + state.results.length);
       }
       if (remoto.visits) state.visits = remoto.visits;
       app.log.info("Config cargada desde JSONBin");
@@ -637,20 +634,24 @@ async function guardarEnNube() {
       sources: state.sources,
       published: (state.published || []).slice(0, 3000),
       // Guardar solo los ultimos 100 productos eBay (publicados) para recuperar tras reinicio
-      results: (state.results || [])
-        .filter(r => (state.published || []).includes(r.id))
-        .slice(0, 3000)
-        .map(r => ({
-          id: r.id,
-          title: (r.title || '').slice(0, 120),
-          aiTitulo: r.aiTitulo || null,
-          aiDescripcion: r.aiDescripcion || null,
-          image: r.image,
-          salePrice: r.salePrice,
-          category: r.category,
-          source: r.source,
-          url: r.url
-        })),
+      results: (state.results || []).slice(0, 3500).map(r => ({
+        id: r.id,
+        title: (r.title || '').slice(0, 120),
+        aiTitulo: r.aiTitulo || null,
+        aiDescripcion: r.aiDescripcion || null,
+        aiUpdatedAt: r.aiUpdatedAt || null,
+        image: r.image,
+        salePrice: r.salePrice,
+        basePrice: r.basePrice,
+        category: r.category,
+        source: r.source,
+        url: r.url,
+        primeraVez: r.primeraVez || null,
+        ultimaVez: r.ultimaVez || null,
+        vecesVisto: r.vecesVisto || 1,
+        activo: r.activo !== false,
+        prioridad: r.prioridad || 'normal',
+      })),
       productosManuales: (state.productosManuales || []).slice(0, 500).map(p => ({
         id: p.id,
         title: (p.title || '').slice(0, 150),
@@ -685,6 +686,42 @@ async function guardarEnNube() {
       try { fs.writeFileSync(path.join(process.cwd(), 'bin_id.txt'), result.binId); } catch(e) {}
     }
   }
+}
+
+// ═══ MERGE de productos preservando IA ═══
+function mergeProducts(existentes, nuevos) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const map = new Map((existentes || []).map(p => [p.id, p]));
+  let nuevosCount = 0, actCount = 0, iaPreservada = 0;
+  for (const n of nuevos) {
+    if (!n || !n.id) continue;
+    const prev = map.get(n.id);
+    if (prev) {
+      const esRebaja = n.salePrice && prev.salePrice && n.salePrice < prev.salePrice;
+      map.set(n.id, {
+        ...prev, ...n,
+        aiTitulo: prev.aiTitulo || null,
+        aiDescripcion: prev.aiDescripcion || null,
+        aiUpdatedAt: prev.aiUpdatedAt || null,
+        primeraVez: prev.primeraVez || hoy,
+        ultimaVez: hoy,
+        vecesVisto: (prev.vecesVisto || 1) + 1,
+        activo: true,
+        prioridad: esRebaja ? 'rebaja' : (prev.prioridad || 'normal'),
+      });
+      actCount++;
+      if (prev.aiTitulo) iaPreservada++;
+    } else {
+      map.set(n.id, {
+        ...n, primeraVez: hoy, ultimaVez: hoy, vecesVisto: 1,
+        activo: true, prioridad: 'nuevo',
+        aiTitulo: null, aiDescripcion: null, aiUpdatedAt: null,
+      });
+      nuevosCount++;
+    }
+  }
+  console.log('[MERGE] +' + nuevosCount + ' nuevos, ' + actCount + ' actualizados, ' + iaPreservada + ' IA preservada');
+  return [...map.values()];
 }
 
 async function runSearch(trigger = 'manual') {
@@ -739,8 +776,14 @@ async function runSearch(trigger = 'manual') {
   });
   // SOLO sobrescribir si hay resultados nuevos (evita borrar catalogo por error)
   if (unique && unique.length > 0) {
-    state.results = unique;
-    state.published = unique.map(r => r.id);
+    {
+      const antes = (state.results || []).length;
+      state.results = mergeProducts(state.results || [], unique);
+      const pubSet = new Set(state.published || []);
+      for (const r of state.results) if (r.activo !== false) pubSet.add(r.id);
+      state.published = [...pubSet];
+      app.log.info('Merge: ' + antes + ' -> ' + state.results.length + ' productos');
+    }
     app.log.info('Resultados guardados: ' + unique.length + ' | Publicados: ' + state.published.length);
   } else {
     app.log.warn('runSearch devolvio 0 productos - NO se sobrescribe state.results (proteccion)');
@@ -920,7 +963,13 @@ async function procesarProductosSinIA(max = 100) {
 
   try {
     const todos = [...(state.results || []), ...(state.productosManuales || [])];
-    const sinIA = todos.filter(p => !p.aiTitulo && p.title).slice(0, max);
+    const sinIA = todos
+      .filter(p => p.activo !== false && p.title && (!p.aiTitulo || String(p.aiTitulo).trim() === ''))
+      .sort((a, b) => {
+        const orden = { 'rebaja': 0, 'oferta': 1, 'nuevo': 2, 'normal': 3 };
+        return (orden[a.prioridad] ?? 3) - (orden[b.prioridad] ?? 3);
+      })
+      .slice(0, max);
     app.log.info('[IA-AUTO] Pendientes sin IA: ' + sinIA.length + ' (max ' + max + ')');
 
     for (let i = 0; i < sinIA.length; i++) {

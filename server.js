@@ -278,6 +278,23 @@ const DEFAULTS = {
       }
     }
   },
+  shopStats: {
+    totalActivos: 0,
+    totalInactivos: 0,
+    totalEliminados: 0,
+    porCategoria: {},
+    crecimiento: [],
+    ultimaPurga: null,
+  },
+  deletedHistory: [],
+  dailySuffixes: {
+    '1': ' deals',
+    '2': ' ofertas',
+    '3': ' new arrival',
+    '4': ' sale',
+    '5': ' trending',
+    '6': ' clearance',
+  },
   categories: DEFAULT_CATEGORIES,
   results: [],
   sources: JSON.parse(JSON.stringify(DEFAULT_SOURCE_STATE)),
@@ -686,6 +703,34 @@ async function guardarEnNube() {
       try { fs.writeFileSync(path.join(process.cwd(), 'bin_id.txt'), result.binId); } catch(e) {}
     }
   }
+}
+
+// ═══ SCORE de producto (para purga inteligente) ═══
+function calculateScore(p) {
+  if (!p) return 0;
+  const hoy = Date.now();
+  const ultimo = p.ultimaVez ? new Date(p.ultimaVez).getTime() : 0;
+  const diasSinVerVal = ultimo ? Math.floor((hoy - ultimo) / 86400000) : 999;
+  const prioridadBonus = { 'rebaja': 15, 'oferta': 10, 'nuevo': 5, 'normal': 0 };
+  const ventas = Number(p.ventasCount || 0);
+  const vistas = Number(p.vistasProducto || 0);
+  const vv = Number(p.vecesVisto || 1);
+  const recenciaBonus = diasSinVerVal <= 7 ? 10 : 0;
+  let score = 0;
+  score += vv * 5;
+  score += p.aiTitulo ? 20 : 0;
+  score += prioridadBonus[p.prioridad] || 0;
+  score += ventas * 50;
+  score += vistas * 2;
+  score += recenciaBonus;
+  score -= Math.min(diasSinVerVal, 365);
+  return Math.round(score);
+}
+
+function diasSinVer(p) {
+  if (!p || !p.ultimaVez) return 999;
+  const ms = Date.now() - new Date(p.ultimaVez).getTime();
+  return Math.floor(ms / 86400000);
 }
 
 // ═══ MERGE de productos preservando IA ═══
@@ -1136,6 +1181,186 @@ function scheduleIA() {
   state.iaNextRun = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
 }
 
+
+// ═══════════════════════════════════════════════════════
+// CRON V2: Semanal + Diario + Cleanup + Purga
+// ═══════════════════════════════════════════════════════
+
+async function _cronSearch(limitePorCat, sufijo, etiqueta, prioridadDefault) {
+  const marginPct = Number(state.margin) || 35;
+  const fuentesActivas = Object.entries(state.sources || {})
+    .filter(function(e) { return e[1] && e[1].enabled; })
+    .map(function(e) { return e[0]; });
+  if (!fuentesActivas.length) {
+    app.log.warn('[' + etiqueta + '] Sin fuentes activas');
+    return 0;
+  }
+  const found = [];
+  for (const cat of state.categories) {
+    const baseTerms = (cat.dummyjson && cat.dummyjson.length) ? cat.dummyjson : [cat.label.toLowerCase()];
+    for (const baseTerm of baseTerms) {
+      const q = sufijo ? (baseTerm + sufijo) : baseTerm;
+      for (const sourceId of fuentesActivas) {
+        try {
+          const items = await adapters.searchFrom(sourceId, q, state.sources);
+          const top = items.slice(0, limitePorCat);
+          for (const it of top) {
+            const pbase = it.price;
+            const sale = +(pbase * (1 + marginPct / 100)).toFixed(2);
+            found.push(Object.assign({}, it, {
+              category: cat.label,
+              basePrice: pbase,
+              salePrice: sale,
+              marginPct: marginPct,
+              foundAt: new Date().toISOString(),
+              prioridad: prioridadDefault || 'normal',
+            }));
+          }
+        } catch (e) {
+          app.log.error('[' + etiqueta + '] err [' + cat.label + ' / ' + sourceId + ' / ' + q + ']: ' + e.message);
+        }
+      }
+    }
+  }
+  const seen = new Set();
+  const unique = found.filter(function(pr) {
+    if (seen.has(pr.id)) return false;
+    seen.add(pr.id);
+    return true;
+  });
+  if (unique.length > 0) {
+    const antes = (state.results || []).length;
+    state.results = mergeProducts(state.results || [], unique);
+    const pubSet = new Set(state.published || []);
+    for (const r of state.results) if (r.activo !== false) pubSet.add(r.id);
+    state.published = Array.from(pubSet);
+    app.log.info('[' + etiqueta + '] ' + antes + ' -> ' + state.results.length + ' productos (traidos: ' + unique.length + ')');
+    logActivity('cron_' + etiqueta.toLowerCase(), { encontrados: unique.length, total: state.results.length });
+    await save();
+  } else {
+    app.log.warn('[' + etiqueta + '] 0 productos - NO se sobrescribe');
+  }
+  return unique.length;
+}
+
+async function runSearchWeekly() {
+  app.log.info('[CRON-SEM] Búsqueda semanal completa');
+  return _cronSearch(50, '', 'CRON-SEM', 'normal');
+}
+
+async function runSearchDaily() {
+  const dow = new Date().getDay();
+  if (dow === 0) {
+    app.log.info('[CRON-DIA] Domingo - saltando (corre semanal)');
+    return 0;
+  }
+  const sufijo = (state.dailySuffixes || {})[String(dow)] || ' deals';
+  app.log.info('[CRON-DIA] Búsqueda diaria con sufijo "' + sufijo + '"');
+  return _cronSearch(10, sufijo, 'CRON-DIA', 'oferta');
+}
+
+async function cleanupProductos() {
+  let marcadosInactivos = 0;
+  let reactivados = 0;
+  for (const p of (state.results || [])) {
+    const dias = diasSinVer(p);
+    if (dias >= 7 && p.activo !== false) {
+      p.activo = false;
+      marcadosInactivos++;
+    } else if (dias < 7 && p.activo === false) {
+      p.activo = true;
+      reactivados++;
+    }
+  }
+  if (marcadosInactivos > 0 || reactivados > 0) {
+    app.log.info('[CLEANUP] Inactivados: ' + marcadosInactivos + ' | Reactivados: ' + reactivados);
+    await save();
+  } else {
+    app.log.info('[CLEANUP] Sin cambios');
+  }
+  return marcadosInactivos;
+}
+
+async function purgaProductos() {
+  const CAP_MAX = 10000;
+  const DIAS_PURGA = 90;
+  let eliminados = 0;
+  const sobrevivientes = [];
+  for (const p of (state.results || [])) {
+    const dias = diasSinVer(p);
+    const score = calculateScore(p);
+    const ventas = Number(p.ventasCount || 0);
+    const vistas = Number(p.vistasProducto || 0);
+    const esJoya = ventas > 0 || vistas > 5;
+    if (dias >= DIAS_PURGA && !esJoya) {
+      eliminados++;
+      state.deletedHistory = state.deletedHistory || [];
+      state.deletedHistory.push({
+        id: p.id,
+        titulo: (p.title || '').slice(0, 100),
+        category: p.category,
+        motivo: 'sin-ver-' + dias + 'd',
+        score: score,
+        fecha: new Date().toISOString(),
+      });
+      continue;
+    }
+    p.score = score;
+    sobrevivientes.push(p);
+  }
+  if (sobrevivientes.length > CAP_MAX) {
+    sobrevivientes.sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
+    const aEliminar = sobrevivientes.splice(CAP_MAX);
+    for (const p of aEliminar) {
+      eliminados++;
+      state.deletedHistory.push({
+        id: p.id,
+        titulo: (p.title || '').slice(0, 100),
+        category: p.category,
+        motivo: 'cap-' + CAP_MAX,
+        score: p.score || 0,
+        fecha: new Date().toISOString(),
+      });
+    }
+  }
+  if ((state.deletedHistory || []).length > 500) {
+    state.deletedHistory = state.deletedHistory.slice(-500);
+  }
+  state.results = sobrevivientes;
+  const activos = sobrevivientes.filter(function(pr) { return pr.activo !== false; }).length;
+  state.shopStats = state.shopStats || {};
+  state.shopStats.totalActivos = activos;
+  state.shopStats.totalInactivos = sobrevivientes.length - activos;
+  state.shopStats.totalEliminados = (state.shopStats.totalEliminados || 0) + eliminados;
+  state.shopStats.ultimaPurga = new Date().toISOString();
+  app.log.info('[PURGA] Eliminados: ' + eliminados + ' | Activos: ' + activos + ' | Total: ' + sobrevivientes.length);
+  await save();
+  return eliminados;
+}
+
+let cronWeekly = null, cronDaily = null, cronCleanup = null, cronPurga = null;
+function scheduleDaily() {
+  if (cronWeekly) cronWeekly.stop();
+  if (cronDaily) cronDaily.stop();
+  if (cronCleanup) cronCleanup.stop();
+  if (cronPurga) cronPurga.stop();
+  const tz = APP_TZ;
+  cronWeekly = cron.schedule('0 5 * * 0', async function() {
+    app.log.info('[CRON-SEM] Disparado');
+    try { await runSearchWeekly(); } catch (e) { app.log.error('[CRON-SEM] ' + e.message); }
+  }, { timezone: tz });
+  cronDaily = cron.schedule('0 5 * * 1-6', async function() {
+    app.log.info('[CRON-DIA] Disparado');
+    try { await runSearchDaily(); } catch (e) { app.log.error('[CRON-DIA] ' + e.message); }
+  }, { timezone: tz });
+  cronCleanup = cron.schedule('0 3 * * *', async function() {
+    try { await cleanupProductos(); } catch (e) { app.log.error('[CLEANUP] ' + e.message); }
+  }, { timezone: tz });
+  cronPurga = cron.schedule('0 4 * * 0', async function() {
+    try { await purgaProductos(); } catch (e) { app.log.error('[PURGA] ' + e.message); }
+  }, { timezone: tz });
+  app.log.info('[CRON-V2] Semanal Dom 05:00 | Diario L-S 05:00 | Cleanup 03:00 | Purga Dom 04:00');
+}
 
 // Endpoint público para healthcheck (UptimeRobot, Pingdom, etc.)
 app.get('/health', async () => ({ ok: true, service: 'comdiaz', ts: Date.now() }));
@@ -2585,14 +2810,41 @@ app.get('/api/stats', async (req) => {
   const hace24h = Date.now() - 24 * 60 * 60 * 1000;
   const recientes = (v.history || []).filter(h => new Date(h.ts).getTime() > hace24h);
 
+  // ═══ Métricas de productos (cron-v2) ═══
+  const todos = state.results || [];
+  const activos = todos.filter(function(pr) { return pr.activo !== false; });
+  const conIA = todos.filter(function(pr) { return !!pr.aiTitulo; });
+  const porCat = {};
+  for (const pr of todos) {
+    const cat = pr.category || 'sin-categoria';
+    if (!porCat[cat]) porCat[cat] = { activos: 0, inactivos: 0, conIA: 0 };
+    if (pr.activo !== false) porCat[cat].activos++;
+    else porCat[cat].inactivos++;
+    if (pr.aiTitulo) porCat[cat].conIA++;
+  }
+
   return {
     ok: true,
+    // Visitas (existente)
     total: v.total || 0,
     hoy: v.byDay?.[hoy] || { visitas: 0, productos: 0, carrito: 0, whatsapp: 0 },
     ultimos7,
     topProductos,
     recientes: recientes.length,
     historialReciente: (v.history || []).slice(0, 30),
+    // Productos (cron-v2 nuevo)
+    productos: {
+      total: todos.length,
+      activos: activos.length,
+      inactivos: todos.length - activos.length,
+      conIA: conIA.length,
+      sinIA: todos.length - conIA.length,
+      porCategoria: porCat,
+    },
+    eliminadosTotal: (state.shopStats && state.shopStats.totalEliminados) || 0,
+    ultimaPurga: (state.shopStats && state.shopStats.ultimaPurga) || null,
+    historialEliminados: (state.deletedHistory || []).slice(-10),
+    dailySuffixes: state.dailySuffixes || {},
   };
 });
 
@@ -3610,6 +3862,7 @@ cargarDesdeNube().then(() => {
   console.log(`Estado: ${state.automation.running ? 'ACTIVO' : 'EN PAUSA'}\n`);
   schedule();
   scheduleIA();
+  scheduleDaily();
   setTimeout(autoSearchOnStart, 5000);
 });
 });

@@ -1121,7 +1121,7 @@ function scheduleIA() {
   iaTask = cron.schedule('0 * * * *', async () => {  // TEMP: cada 1h para terminar los 3074
     app.log.info('[IA-AUTO] Cron cada 6h disparado');
     try {
-      await procesarProductosSinIA(500);
+      await procesarProductosSinIA(200);
     } catch (e) {
       app.log.error('[IA-AUTO] Error en productos: ' + e.message);
     }

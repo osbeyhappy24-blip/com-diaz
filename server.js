@@ -1006,11 +1006,29 @@ async function procesarProductosSinIA(max = 100) {
       } catch (e) {
         errores++;
         app.log.error('[IA-AUTO] Error en ' + p.id + ': ' + e.message);
-        // Si hay muchos errores seguidos, esperar
-        if (errores >= 5 && errores % 5 === 0) {
-          app.log.warn('[IA-AUTO] 5 errores, esperando 60s...');
-          await new Promise(s => setTimeout(s, 60000));
+
+        // Lógica de reintento con retroceso exponencial para errores 503
+        if (e.message.includes('503') || e.message.includes('UNAVAILABLE')) {
+          let espera = 2000; // 2 segundos iniciales
+          for (let intento = 1; intento <= 3; intento++) {
+            app.log.warn(`[IA-AUTO] Reintento ${intento}/3 para ${p.id} en ${espera/1000}s...`);
+            await new Promise(s => setTimeout(s, espera));
+            try {
+              // Reintentar la misma petición a la IA
+              const txt = await preguntarIA(prompt, { json: true });
+              const out = JSON.parse(String(txt).replace(/```json|```/g, '').trim());
+              // ... (código para actualizar el producto con el resultado exitoso)
+              app.log.info(`[IA-AUTO] Reintento ${intento} exitoso para ${p.id}`);
+              break; // Salir del bucle de reintentos si tiene éxito
+            } catch (retryError) {
+              if (intento === 3) {
+                app.log.error(`[IA-AUTO] Fallaron los 3 reintentos para ${p.id}.`);
+              }
+              espera *= 2; // Duplicar el tiempo de espera
+            }
+          }
         }
+        // ... (el resto de la lógica de espera por errores consecutivos)
       }
     }
 

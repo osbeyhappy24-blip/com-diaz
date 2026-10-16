@@ -1547,7 +1547,8 @@ app.get('/api/public/catalog', async (req) => {
       promociones: (state.shopConfig?.promociones || []).filter(p => p && p.activo !== false),
       aiBanners: (state.shopConfig?.aiBanners || []).filter(p => p && p.activo !== false),
       aiBannersUpdated: state.shopConfig?.aiBannersUpdated || null,
-      rotacionSeg: Number(state.shopConfig?.rotacionSeg) || 5,
+      aiBanners: state.shopConfig?.aiBanners || { frases: [], actualizado: null },
+    rotacionSeg: Number(state.shopConfig?.rotacionSeg) || 5,
     },
     products: ordenados,
   };

@@ -248,6 +248,9 @@ const DEFAULTS = {
       { id: 'p1', texto: 'Envio gratis en pedidos +$50', emoji: 'truck', color: 'green', activo: true }
     ],
     rotacionSeg: 5,
+    // Frases generadas por IA (se rotan junto a las promociones)
+    aiBanners: [],
+    aiBannersUpdated: null,
   },
   loginAttempts: {}, // IP -> { count, blockedUntil }
   activityLog: [], // ultimos eventos
@@ -977,6 +980,74 @@ async function procesarProductosSinIA(max = 100) {
   }
 }
 
+async function generarFrasesBanner() {
+  try {
+    const cfg = state.shopConfig || {};
+    const promos = (cfg.promociones || []).filter(p => p && p.activo !== false);
+    const promosTexto = promos.length
+      ? promos.map(p => '- ' + (p.texto || '')).join('\n')
+      : '- Envio gratis en pedidos +$50\n- Nuevos productos cada dia';
+
+    // Top 3 categorias con mas productos
+    const todasCats = [...(state.results || []), ...(state.productosManuales || [])]
+      .map(p => p.category)
+      .filter(Boolean);
+    const conteo = {};
+    todasCats.forEach(c => conteo[c] = (conteo[c] || 0) + 1);
+    const topCats = Object.entries(conteo)
+      .sort((a,b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([c]) => c)
+      .join(', ');
+
+    const prompt = `Eres creativo de marketing de "Comdiaz Shop", tienda cubana online de productos importados con envio a toda Cuba.
+
+Genera EXACTAMENTE 5 frases cortas y llamativas para el banner rotativo de la tienda.
+
+PROMOCIONES ACTIVAS (deben aparecer):
+${promosTexto}
+
+CATEGORIAS DESTACADAS: ${topCats || 'productos varios'}
+
+REGLAS ESTRICTAS:
+- Devuelve SOLO un JSON valido con este formato exacto:
+  {"frases": [{"texto": "...", "emoji": "...", "color": "..."}]}
+- El "texto" debe ser maximo 60 caracteres, en espanol cubano natural
+- El "emoji" debe ser 1 solo emoji (sin texto)
+- El "color" debe ser uno de: gradient, green, orange, red, blue, dark
+- VARIEDAD: no repitas estructura entre frases
+- Algunas con URGENCIA, otras con BENEFICIO, otras con CURIOSIDAD
+- NO uses hashtags, NO uses MAYUSCULAS excesivas
+- Ejemplos del estilo: "Envio gratis desde $50", "Nuevo stock cada semana", "Lo mejor para tu hogar", "Precios que sorprenden"
+
+Devuelve SOLO el JSON, sin explicaciones.`;
+
+    const txt = await preguntarIA(prompt, { json: true });
+    const out = JSON.parse(String(txt).replace(/```json|```/g, '').trim());
+    const frases = (out.frases || []).filter(f => f.texto && f.texto.length <= 80).slice(0, 8);
+
+    if (frases.length > 0) {
+      state.shopConfig = state.shopConfig || {};
+      state.shopConfig.aiBanners = frases.map((f, i) => ({
+        id: 'ai-' + Date.now() + '-' + i,
+        texto: String(f.texto).slice(0, 80),
+        emoji: String(f.emoji || '✨').slice(0, 4),
+        color: ['gradient','green','orange','red','blue','dark'].includes(f.color) ? f.color : 'gradient',
+        activo: true,
+        generatedByAI: true
+      }));
+      state.shopConfig.aiBannersUpdated = new Date().toISOString();
+      await save();
+      app.log.info('[IA-BANNERS] ' + frases.length + ' frases generadas');
+      return { ok: true, total: frases.length };
+    }
+    return { ok: false, error: 'Sin frases validas' };
+  } catch(e) {
+    app.log.error('[IA-BANNERS] Error: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
 function scheduleIA() {
   if (iaTask) iaTask.stop();
   // Cada 6 horas: 00:00, 06:00, 12:00, 18:00
@@ -985,7 +1056,13 @@ function scheduleIA() {
     try {
       await procesarProductosSinIA(100);
     } catch (e) {
-      app.log.error('[IA-AUTO] Error en cron: ' + e.message);
+      app.log.error('[IA-AUTO] Error en productos: ' + e.message);
+    }
+    // Tambien regenera frases del banner
+    try {
+      await generarFrasesBanner();
+    } catch (e) {
+      app.log.error('[IA-AUTO] Error en frases banner: ' + e.message);
     }
   }, { timezone: APP_TZ });
   app.log.info('[IA-AUTO] Cron configurado cada 6h (timezone ' + APP_TZ + ')');
@@ -1468,6 +1545,8 @@ app.get('/api/public/catalog', async (req) => {
       bannerTexto: state.shopConfig?.bannerTexto || '',
       bannerColor: state.shopConfig?.bannerColor || 'gradient',
       promociones: (state.shopConfig?.promociones || []).filter(p => p && p.activo !== false),
+      aiBanners: (state.shopConfig?.aiBanners || []).filter(p => p && p.activo !== false),
+      aiBannersUpdated: state.shopConfig?.aiBannersUpdated || null,
       rotacionSeg: Number(state.shopConfig?.rotacionSeg) || 5,
     },
     products: ordenados,
@@ -1633,6 +1712,16 @@ app.post('/api/ai/process-pending', async (req, reply) => {
   try {
     const r = await procesarProductosSinIA(max);
     return { ok: true, ...r };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+app.post('/api/ai/generate-banners', async (req, reply) => {
+  try {
+    const r = await generarFrasesBanner();
+    return r;
   } catch(e) {
     reply.code(500);
     return { ok: false, error: e.message };

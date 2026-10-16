@@ -1118,7 +1118,7 @@ Devuelve SOLO el JSON, sin explicaciones.`;
 function scheduleIA() {
   if (iaTask) iaTask.stop();
   // Cada 6 horas: 00:00, 06:00, 12:00, 18:00
-  iaTask = cron.schedule('0 * * * *', async () => {  // TEMP: cada 1h para terminar los 3074
+  iaTask = cron.schedule('0 */6 * * *', async () => {
     app.log.info('[IA-AUTO] Cron cada 6h disparado');
     try {
       await procesarProductosSinIA(200);
@@ -1132,8 +1132,8 @@ function scheduleIA() {
       app.log.error('[IA-AUTO] Error en frases banner: ' + e.message);
     }
   }, { timezone: APP_TZ });
-  app.log.info('[IA-AUTO] Cron configurado cada 1h TEMP (timezone ' + APP_TZ + ')');
-  state.iaNextRun = new Date(Date.now() + 1 * 60 * 60 * 1000).toISOString();
+  app.log.info('[IA-AUTO] Cron configurado cada 6h (timezone ' + APP_TZ + ')');
+  state.iaNextRun = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
 }
 
 

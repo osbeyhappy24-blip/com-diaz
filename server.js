@@ -2123,7 +2123,7 @@ app.get('/api/manual/products', async (req) => {
 });
 
 // GET público: lista de provincias y municipios de Cuba
-app.get('/api/provincias', async () => ({
+app.get('/api/public/provincias', async () => ({
   ok: true,
   provincias: CUBA_UBICACIONES,
 }));

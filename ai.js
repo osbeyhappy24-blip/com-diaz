@@ -50,7 +50,7 @@ function bloquearKey(k, ms) {
   keysBloqueadas.set(k, Date.now() + ms);
 }
 
-export async function preguntarIA(prompt, { json = false } = {}) {
+export async function preguntarIA(prompt, { json = false, images = [] } = {}) {
   leerEnv();
   const keys = obtenerKeys();
   const model = process.env.GEMINI_MODEL;

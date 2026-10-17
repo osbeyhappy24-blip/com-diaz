@@ -2211,6 +2211,102 @@ RESPUESTA:`;
   }
 });
 
+// ═══════════════════════════════════════════════════════
+// IA VISION — Analizar foto de producto local
+// ═══════════════════════════════════════════════════════
+app.post('/api/ai/analyze-photo', async (req, reply) => {
+  const startMs = Date.now();
+  try {
+    const { imageBase64, imageUrl } = req.body || {};
+    let base64Data = '';
+    let mimeType = 'image/jpeg';
+
+    if (imageBase64) {
+      const raw = String(imageBase64);
+      base64Data = raw.replace(/^data:image\/[^;]+;base64,/, '');
+      const m = raw.match(/^data:(image\/[^;]+);base64,/);
+      if (m) mimeType = m[1];
+    } else if (imageUrl) {
+      const r = await fetch(String(imageUrl));
+      if (!r.ok) { reply.code(400); return { ok: false, error: 'No se pudo descargar la imagen (HTTP ' + r.status + ')' }; }
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length > 5 * 1024 * 1024) { reply.code(400); return { ok: false, error: 'Imagen muy grande (>5MB)' }; }
+      base64Data = buf.toString('base64');
+      mimeType = r.headers.get('content-type') || 'image/jpeg';
+    } else {
+      reply.code(400);
+      return { ok: false, error: 'Falta imageBase64 o imageUrl' };
+    }
+
+    if (!base64Data || base64Data.length < 100) {
+      reply.code(400);
+      return { ok: false, error: 'Imagen vacía o inválida' };
+    }
+
+    // Categorías existentes para que la IA elija una
+    const cats = (state.categories || []).map(c => c.label).filter(Boolean);
+    const catList = cats.length ? cats.join(' | ') : 'Otros';
+    const estadosValidos = 'nuevo | usado | reacondicionado';
+
+    const prompt = `Eres experto en e-commerce para el mercado cubano. Analiza la imagen de este producto y devuelve SOLO un JSON válido con esta forma exacta (sin markdown, sin explicaciones):
+
+{
+  "titulo": "Título corto y claro en español, máximo 70 caracteres, sin emojis",
+  "categoria": "Elige UNA de esta lista: ${catList}",
+  "descripcion": "2 o 3 frases en español, máximo 400 caracteres, sin inventar marcas ni medidas",
+  "estado": "uno de: ${estadosValidos}",
+  "precioSugeridoUSD": número entre 5 y 5000,
+  "tienePrecioIncrustado": true si la imagen tiene texto de precio sobreimpreso, false si no,
+  "confianza": número entre 0.0 y 1.0
+}
+
+IMPORTANTE:
+- Si NO puedes identificar el producto, pon confianza < 0.3 y título "Producto sin identificar".
+- El precio sugerido debe ser razonable para reventa en Cuba (no precio de tienda nueva).
+- Si detectas que el estado es usado (desgaste visible), reflejarlo.`;
+
+    const txt = await preguntarIA(prompt, {
+      json: true,
+      images: [{ mimeType, data: base64Data }],
+    });
+
+    let sugerencia;
+    try {
+      sugerencia = JSON.parse(String(txt).replace(/```json|```/g, '').trim());
+    } catch (e) {
+      return { ok: false, error: 'IA devolvió JSON inválido: ' + String(txt).slice(0, 200) };
+    }
+
+    // Validar campos mínimos
+    if (!sugerencia.titulo) sugerencia.titulo = 'Producto sin título';
+    if (!sugerencia.categoria || !cats.includes(sugerencia.categoria)) {
+      sugerencia.categoria = cats[0] || 'Local';
+    }
+    if (!['nuevo','usado','reacondicionado'].includes(sugerencia.estado)) {
+      sugerencia.estado = 'nuevo';
+    }
+    sugerencia.precioSugeridoUSD = Number(sugerencia.precioSugeridoUSD) || 0;
+    sugerencia.confianza = Number(sugerencia.confianza) || 0.5;
+
+    const durMs = Date.now() - startMs;
+    logActivity('ai_analyze_photo', {
+      titulo: String(sugerencia.titulo).slice(0, 60),
+      confianza: sugerencia.confianza,
+      durMs,
+    });
+
+    return {
+      ok: true,
+      sugerencia,
+      meta: { durMs, mimeType, sizeKB: Math.round(base64Data.length * 0.75 / 1024) }
+    };
+  } catch (e) {
+    app.log.error('[AI-PHOTO] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message, durMs: Date.now() - startMs };
+  }
+});
+
 app.get('/api/ai/status', async (req) => {
   const results = state.results || [];
   const manuales = state.productosManuales || [];

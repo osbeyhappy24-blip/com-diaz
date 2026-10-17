@@ -2099,6 +2099,197 @@ app.post('/api/ai/save', async (req, reply) => {
 // ═══════════════════════════════════════════════════════
 // COPILOTO IA — Asistente contextual del negocio
 // ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
+// COPILOTO con STREAMING (SSE) + Groq primero
+// ═══════════════════════════════════════════════════════
+async function buildCopilotContext(historial) {
+  const results = state.results || [];
+  const manuales = state.productosManuales || [];
+  const locales = manuales.filter(p => p.tipo === 'local');
+  const pedidos = state.orders || [];
+  const pendientes = pedidos.filter(o => o.estado !== 'entregado' && o.estado !== 'cancelado');
+  const hoy = new Date().toISOString().slice(0, 10);
+  const ventasHoy = pedidos.filter(o => (o.createdAt || '').startsWith(hoy));
+  const totalVentasHoy = ventasHoy.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+  const conIA = results.filter(p => p.aiTitulo).length;
+  const porCat = {};
+  for (const p of results) { const cat = p.category || 'Otros'; porCat[cat] = (porCat[cat] || 0) + 1; }
+  const topCats = Object.entries(porCat).sort((a,b) => b[1]-a[1]).slice(0, 3);
+
+  const contexto = {
+    catalogo: {
+      total: results.length, conIA, sinIA: results.length - conIA,
+      publicados: (state.published || []).length,
+      locales: locales.length, localesPublicados: locales.filter(p => p.publicado).length,
+      topCategorias: topCats,
+    },
+    ventas: {
+      pedidosTotal: pedidos.length, pedidosPendientes: pendientes.length,
+      ventasHoy: ventasHoy.length, ingresosHoy: +totalVentasHoy.toFixed(2),
+    },
+    sistema: {
+      cronesActivos: { semanal: 'Dom 05:00', diario: 'L-S 05:00', cleanup: '03:00', purga: 'Dom 04:00', ia: 'cada 6h' },
+      ultimaPurga: state.shopStats?.ultimaPurga || null,
+      iaEnProgreso: conIA < results.length,
+    },
+    config: {
+      whatsapp: state.shopConfig?.whatsapp, titulo: state.shopConfig?.titulo,
+      bannerActivo: state.shopConfig?.bannerActivo,
+    },
+  };
+
+  const historialTexto = Array.isArray(historial) && historial.length
+    ? '\n\nCONVERSACION RECIENTE:\n' + historial.slice(-6).map(h =>
+        (h.rol === 'user' ? 'USUARIO: ' : 'COPILOTO: ') + String(h.texto || '').slice(0, 300)
+      ).join('\n')
+    : '';
+
+  return { contexto, historialTexto };
+}
+
+function buildCopilotPrompt(contexto, historialTexto, mensaje) {
+  return `Eres el COPILOTO de Comdiaz Shop, un asistente experto que ayuda al dueno del negocio a gestionar su tienda online (eBay, Temu, productos locales) y su APK privada.
+
+CONTEXTO ACTUAL DEL NEGOCIO (JSON):
+${JSON.stringify(contexto, null, 2)}
+${historialTexto}
+
+INSTRUCCIONES:
+- Responde en espanol, claro, breve (maximo 3 parrafos).
+- Si detectas problemas, mencionalos proactivamente.
+- Si sugieres una accion concreta, termina con: ACCION_SUGERIDA: {"tipo":"...","detalles":"..."}
+- Si solo es consulta, NO incluyas ACCION_SUGERIDA.
+- NUNCA ejecutes acciones por tu cuenta, solo SUGIERE.
+- Si no sabes algo, dilo honestamente.
+
+MENSAJE DEL USUARIO:
+${String(mensaje).slice(0, 1000)}
+
+RESPUESTA:`;
+}
+
+app.post('/api/ai/copilot-stream', async (req, reply) => {
+  const { mensaje, historial } = req.body || {};
+  if (!mensaje || typeof mensaje !== 'string') {
+    reply.code(400);
+    return { ok: false, error: 'Falta mensaje' };
+  }
+
+  aiResetIfNewDay();
+  aiUsageCounters.copiloto++;
+
+  const { contexto, historialTexto } = await buildCopilotContext(historial);
+  const prompt = buildCopilotPrompt(contexto, historialTexto, mensaje);
+
+  // Configurar SSE
+  reply.raw.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+
+  const sendSSE = (data) => {
+    try { reply.raw.write('data: ' + JSON.stringify(data) + '\n\n'); } catch(_) {}
+  };
+
+  const groqKey = process.env.GROQ_API_KEY;
+  let respuestaCompleta = '';
+  let proveedor = 'ninguno';
+
+  try {
+    if (groqKey) {
+      // ─── INTENTO 1: Groq (rápido) ───
+      proveedor = 'groq';
+      try {
+        const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + groqKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'llama-3.3-70b-versatile',
+            messages: [{ role: 'user', content: prompt }],
+            stream: true,
+            temperature: 0.7,
+            max_tokens: 800,
+          }),
+        });
+
+        if (!groqRes.ok) {
+          const errTxt = await groqRes.text();
+          throw new Error('Groq HTTP ' + groqRes.status + ': ' + errTxt.slice(0, 200));
+        }
+
+        const reader = groqRes.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data: ')) continue;
+            const dataStr = trimmed.slice(6);
+            if (dataStr === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(dataStr);
+              const chunk = parsed.choices?.[0]?.delta?.content || '';
+              if (chunk) {
+                respuestaCompleta += chunk;
+                sendSSE({ chunk });
+              }
+            } catch(_) {}
+          }
+        }
+      } catch (groqErr) {
+        app.log.warn('[COPILOT] Groq falló: ' + groqErr.message + ' → fallback Gemini');
+        proveedor = 'gemini-fallback';
+        sendSSE({ info: 'Groq no disponible, usando Gemini' });
+        respuestaCompleta = '';
+      }
+    }
+
+    // ─── FALLBACK: Gemini (sin streaming real, simulamos) ───
+    if (!respuestaCompleta) {
+      proveedor = 'gemini';
+      const respuesta = await preguntarIA(prompt, { json: false });
+      respuestaCompleta = String(respuesta || '').trim();
+      // Simular streaming: enviar en trozos de 8 caracteres
+      const chunkSize = 8;
+      for (let i = 0; i < respuestaCompleta.length; i += chunkSize) {
+        sendSSE({ chunk: respuestaCompleta.slice(i, i + chunkSize) });
+        await new Promise(r => setTimeout(r, 30));
+      }
+    }
+
+    // ─── Parsear acción sugerida al final ───
+    let texto = respuestaCompleta;
+    let accionSugerida = null;
+    const matchAccion = texto.match(/ACCION_SUGERIDA:\s*(\{[^}]+\})/);
+    if (matchAccion) {
+      try {
+        accionSugerida = JSON.parse(matchAccion[1]);
+        texto = texto.replace(/ACCION_SUGERIDA:.*$/s, '').trim();
+      } catch(_) {}
+    }
+
+    // Enviar done con la acción y el texto final limpio
+    sendSSE({ done: true, accionSugerida, textoFinal: texto, proveedor, contexto });
+    logActivity('copilot_stream', { proveedor, longitud: texto.length });
+    reply.raw.end();
+  } catch (e) {
+    app.log.error('[COPILOT-STREAM] ' + e.message);
+    sendSSE({ error: e.message });
+    reply.raw.end();
+  }
+});
+
 app.post('/api/ai/copilot', async (req) => {
   try {
     const { mensaje, historial } = req.body || {};

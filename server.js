@@ -692,16 +692,32 @@ async function guardarEnNube() {
         id: p.id,
         title: (p.title || '').slice(0, 150),
         image: p.image,
-        images: p.images ? p.images.slice(0, 1) : [],
+        imagePrincipal: p.imagePrincipal || p.image,
+        images: Array.isArray(p.images) ? p.images.slice(0, 8) : (p.image ? [p.image] : []),
         category: p.category,
+        description: (p.description || '').slice(0, 2000),
+        // Precios
         priceBase: p.priceBase,
         salePrice: p.salePrice,
         margenPct: p.margenPct,
+        precioUSD: p.precioUSD || null,
+        precioCUP: p.precioCUP || null,
+        precioDirecto: p.precioDirecto || false,
+        // Stock y ubicación
         cantidad: p.cantidad,
+        tipo: p.tipo || null,
+        provincia: p.provincia || null,
+        municipio: p.municipio || null,
+        estado: p.estado || null,
+        // Notas y flags
+        notas: p.notas || null,
         publicado: p.publicado,
+        destacado: p.destacado || false,
+        // Origen y meta
         source: p.source,
         sourceUrl: p.sourceUrl,
-        createdAt: p.createdAt
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt || null
       })),
       orders: (state.orders || []).slice(0, 200),
       subscriptions: (state.subscriptions || []).slice(-500),

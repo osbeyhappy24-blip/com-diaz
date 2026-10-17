@@ -688,7 +688,7 @@ async function guardarEnNube() {
         activo: r.activo !== false,
         prioridad: r.prioridad || 'normal',
       })),
-      productosManuales: (state.productosManuales || []).slice(0, 500).map(p => ({
+      productosManuales: (state.productosManuales || []).slice(0, 5000).map(p => ({
         id: p.id,
         title: (p.title || '').slice(0, 150),
         image: p.image,
@@ -721,6 +721,61 @@ async function guardarEnNube() {
     if (result && result.binId) {
       try { fs.writeFileSync(path.join(process.cwd(), 'bin_id.txt'), result.binId); } catch(e) {}
     }
+    // ═══ BACKUP REDUNDANTE: solo locales, archivo separado ═══
+    try {
+      const locales = (state.productosManuales || []).filter(p => p.tipo === 'local');
+      if (locales.length > 0) {
+        const backupLocales = {
+          _ts: new Date().toISOString(),
+          total: locales.length,
+          productos: locales,
+        };
+        await guardarEstadoBackup(backupLocales);
+      }
+    } catch(e) {
+      app.log.warn('[BACKUP-LOCALES] Fallo backup redundante: ' + e.message);
+    }
+  }
+}
+
+// Guardar backup de locales en archivo separado (máxima seguridad)
+async function guardarEstadoBackup(backup) {
+  try {
+    const GITHUB_API = 'https://api.github.com';
+    const FILE_PATH = 'locals-backup.json';
+    const token = process.env.GITHUB_STATE_TOKEN;
+    const repo = process.env.GITHUB_STATE_REPO;
+    if (!token || !repo) return;
+    const zlib = await import('zlib');
+    const json = JSON.stringify(backup);
+    const gz = zlib.gzipSync(Buffer.from(json, 'utf8'), { level: 9 });
+    const b64 = gz.toString('base64');
+    const url = GITHUB_API + '/repos/' + repo + '/contents/' + FILE_PATH;
+    const headers = {
+      'Authorization': 'Bearer ' + token,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'comdiaz-backend',
+    };
+    let sha = null;
+    const getRes = await fetch(url, { headers });
+    if (getRes.ok) { const ex = await getRes.json(); sha = ex.sha; }
+    const body = {
+      message: 'backup locals ' + new Date().toISOString(),
+      content: b64,
+      committer: { name: 'Comdiaz Backend', email: 'backend@comdiaz.com' },
+    };
+    if (sha) body.sha = sha;
+    const putRes = await fetch(url, {
+      method: 'PUT',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (putRes.ok) {
+      app.log.info('[BACKUP-LOCALES] ' + backup.total + ' locales guardados (' + Math.round(gz.length/1024) + ' KB)');
+    }
+  } catch(e) {
+    app.log.warn('[BACKUP-LOCALES] ' + e.message);
   }
 }
 
@@ -2107,6 +2162,47 @@ app.post('/api/shop-config', async (req) => {
 // ═══════════════════════════════════════════════
 
 // GET con auth: lista los productos manuales
+// POST: recuperar locales desde backup redundante
+app.post('/api/manual/restore-backup', async (req) => {
+  try {
+    const GITHUB_API = 'https://api.github.com';
+    const FILE_PATH = 'locals-backup.json';
+    const token = process.env.GITHUB_STATE_TOKEN;
+    const repo = process.env.GITHUB_STATE_REPO;
+    if (!token || !repo) return { ok: false, error: 'GitHub no configurado' };
+    const url = GITHUB_API + '/repos/' + repo + '/contents/' + FILE_PATH;
+    const res = await fetch(url, {
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'comdiaz-backend',
+      },
+    });
+    if (!res.ok) return { ok: false, error: 'No hay backup: HTTP ' + res.status };
+    const data = await res.json();
+    const zlib = await import('zlib');
+    const gz = Buffer.from(data.content, 'base64');
+    const json = zlib.gunzipSync(gz).toString('utf8');
+    const backup = JSON.parse(json);
+    const productos = backup.productos || [];
+    // Merge por id: no duplicar, no perder nada
+    const existentes = new Set((state.productosManuales || []).map(p => p.id));
+    let nuevos = 0;
+    for (const p of productos) {
+      if (!existentes.has(p.id)) {
+        state.productosManuales = state.productosManuales || [];
+        state.productosManuales.push(p);
+        nuevos++;
+      }
+    }
+    await save();
+    return { ok: true, recuperados: nuevos, total: productos.length, ts: backup._ts };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 app.get('/api/manual/products', async (req) => {
   let lista = state.productosManuales || [];
   const q = req.query || {};

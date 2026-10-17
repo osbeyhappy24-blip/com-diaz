@@ -2203,6 +2203,22 @@ app.post('/api/manual/restore-backup', async (req) => {
   }
 });
 
+// POST temporal: migrar source=local sin tipo → tipo=local
+app.post('/api/manual/migrate-tipo', async (req) => {
+  let migrados = 0;
+  for (const p of (state.productosManuales || [])) {
+    if (p.source === 'local' && !p.tipo) {
+      p.tipo = 'local';
+      migrados++;
+    }
+  }
+  if (migrados > 0) {
+    await save();
+    logActivity('migrate_tipo_local', { migrados });
+  }
+  return { ok: true, migrados };
+});
+
 app.get('/api/manual/products', async (req) => {
   let lista = state.productosManuales || [];
   const q = req.query || {};

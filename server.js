@@ -1818,6 +1818,46 @@ setInterval(() => {
 // ═══════════════════════════════════════════════
 
 // GET público: catálogo de productos publicados
+// POST: sincronizar published con results activos (limpieza + publicación masiva)
+app.post('/api/manual/sync-published', async (req) => {
+  const results = state.results || [];
+  const resultsIds = new Set(results.map(r => r.id).filter(Boolean));
+  const oldPublished = new Set(state.published || []);
+
+  // Solo mantener published que existan en results + añadir TODOS los activos con imagen
+  const newPublished = new Set();
+  let eliminados = 0, añadidos = 0;
+
+  for (const id of oldPublished) {
+    if (resultsIds.has(id)) {
+      newPublished.add(id);
+    } else {
+      eliminados++;
+    }
+  }
+
+  for (const r of results) {
+    if (r.id && r.activo !== false && r.image && String(r.image).length > 10) {
+      if (!newPublished.has(r.id)) {
+        newPublished.add(r.id);
+        añadidos++;
+      }
+    }
+  }
+
+  state.published = Array.from(newPublished);
+  await save();
+  logActivity('sync_published', { eliminados, añadidos, total: state.published.length });
+
+  return {
+    ok: true,
+    totalAntes: oldPublished.size,
+    totalDespues: state.published.length,
+    eliminados,
+    añadidos,
+  };
+});
+
 app.get('/api/public/catalog', async (req) => {
   const page = Math.max(Number(req.query?.page) || 1, 1);
   const perPage = Math.min(Math.max(Number(req.query?.perPage) || 100, 1), 300);

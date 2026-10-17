@@ -1138,6 +1138,8 @@ async function procesarProductosSinIA(max = 100) {
         const enManuales = (state.productosManuales || []).find(r => r.id === p.id);
         const ref = enResults || enManuales;
         if (ref) {
+          aiResetIfNewDay();
+          aiUsageCounters.productos++;
           ref.aiTitulo = String(out.titulo || '').slice(0, 120);
           ref.aiDescripcion = String(out.descripcion || '').slice(0, 600);
           ref.aiUpdatedAt = new Date().toISOString();
@@ -2183,6 +2185,8 @@ ${String(mensaje).slice(0, 1000)}
 
 RESPUESTA:`;
 
+    aiResetIfNewDay();
+    aiUsageCounters.copiloto++;
     const respuesta = await preguntarIA(prompt, { json: false });
 
     // ─── Parsear acciones sugeridas (si hay) ───
@@ -2214,6 +2218,41 @@ RESPUESTA:`;
 // ═══════════════════════════════════════════════════════
 // IA VISION — Analizar foto de producto local
 // ═══════════════════════════════════════════════════════
+// ═══ CONTADOR DE USO IA ═══
+const aiUsageCounters = {
+  fecha: new Date().toISOString().slice(0, 10),
+  productos: 0, fotos: 0, copiloto: 0, banners: 0, descripcion: 0, otros: 0,
+};
+
+function aiResetIfNewDay() {
+  const hoy = new Date().toISOString().slice(0, 10);
+  if (aiUsageCounters.fecha !== hoy) {
+    aiUsageCounters.fecha = hoy;
+    aiUsageCounters.productos = 0;
+    aiUsageCounters.fotos = 0;
+    aiUsageCounters.copiloto = 0;
+    aiUsageCounters.banners = 0;
+    aiUsageCounters.descripcion = 0;
+    aiUsageCounters.otros = 0;
+  }
+}
+
+app.get('/api/ai/usage', async () => {
+  aiResetIfNewDay();
+  const total = aiUsageCounters.productos + aiUsageCounters.fotos +
+                aiUsageCounters.copiloto + aiUsageCounters.banners +
+                aiUsageCounters.descripcion + aiUsageCounters.otros;
+  const LIMITE = 3000;
+  return {
+    ok: true,
+    fecha: aiUsageCounters.fecha,
+    detalle: { ...aiUsageCounters, fecha: undefined },
+    total, limite: LIMITE,
+    restante: Math.max(0, LIMITE - total),
+    porcentaje: Math.round((total / LIMITE) * 1000) / 10,
+  };
+});
+
 app.post('/api/ai/analyze-photo', async (req, reply) => {
   const startMs = Date.now();
   try {
@@ -2288,6 +2327,8 @@ IMPORTANTE:
     sugerencia.precioSugeridoUSD = Number(sugerencia.precioSugeridoUSD) || 0;
     sugerencia.confianza = Number(sugerencia.confianza) || 0.5;
 
+    aiResetIfNewDay();
+    aiUsageCounters.fotos++;
     const durMs = Date.now() - startMs;
     logActivity('ai_analyze_photo', {
       titulo: String(sugerencia.titulo).slice(0, 60),

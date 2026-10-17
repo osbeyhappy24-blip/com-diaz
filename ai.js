@@ -71,7 +71,20 @@ export async function preguntarIA(prompt, { json = false, images = [] } = {}) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
+            contents: [{ parts: (() => {
+            const parts = [{ text: prompt }];
+            for (const img of images) {
+              if (img && img.data) {
+                parts.push({
+                  inline_data: {
+                    mime_type: img.mimeType || 'image/jpeg',
+                    data: img.data,
+                  },
+                });
+              }
+            }
+            return parts;
+          })() }],
             generationConfig: json ? { responseMimeType: 'application/json' } : {},
           }),
         }

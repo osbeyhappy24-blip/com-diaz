@@ -2094,6 +2094,123 @@ app.post('/api/ai/save', async (req, reply) => {
 // ESTADO DE LA IA - Monitoreo
 // ═══════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════
+// COPILOTO IA — Asistente contextual del negocio
+// ═══════════════════════════════════════════════════════
+app.post('/api/ai/copilot', async (req) => {
+  try {
+    const { mensaje, historial } = req.body || {};
+    if (!mensaje || typeof mensaje !== 'string') {
+      return { ok: false, error: 'Falta mensaje' };
+    }
+
+    // ─── Construir contexto COMPLETO del negocio ───
+    const results = state.results || [];
+    const manuales = state.productosManuales || [];
+    const locales = manuales.filter(p => p.tipo === 'local');
+    const pedidos = state.orders || [];
+    const pendientes = pedidos.filter(o => o.estado !== 'entregado' && o.estado !== 'cancelado');
+    const hoy = new Date().toISOString().slice(0, 10);
+    const ventasHoy = pedidos.filter(o => (o.createdAt || '').startsWith(hoy));
+    const totalVentasHoy = ventasHoy.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+    const conIA = results.filter(p => p.aiTitulo).length;
+
+    // Top 3 categorías
+    const porCat = {};
+    for (const p of results) {
+      const cat = p.category || 'Otros';
+      porCat[cat] = (porCat[cat] || 0) + 1;
+    }
+    const topCats = Object.entries(porCat).sort((a,b) => b[1]-a[1]).slice(0, 3);
+
+    const contexto = {
+      catalogo: {
+        total: results.length,
+        conIA,
+        sinIA: results.length - conIA,
+        publicados: (state.published || []).length,
+        locales: locales.length,
+        localesPublicados: locales.filter(p => p.publicado).length,
+        topCategorias: topCats,
+      },
+      ventas: {
+        pedidosTotal: pedidos.length,
+        pedidosPendientes: pendientes.length,
+        ventasHoy: ventasHoy.length,
+        ingresosHoy: +totalVentasHoy.toFixed(2),
+      },
+      sistema: {
+        cronesActivos: {
+          semanal: 'Dom 05:00',
+          diario: 'L-S 05:00',
+          cleanup: '03:00',
+          purga: 'Dom 04:00',
+          ia: 'cada 6h',
+        },
+        ultimaPurga: state.shopStats?.ultimaPurga || null,
+        iaEnProgreso: conIA < results.length,
+      },
+      config: {
+        whatsapp: state.shopConfig?.whatsapp,
+        titulo: state.shopConfig?.titulo,
+        bannerActivo: state.shopConfig?.bannerActivo,
+      },
+    };
+
+    // ─── Construir prompt para Gemini ───
+    const historialTexto = Array.isArray(historial) && historial.length
+      ? '\n\nCONVERSACION RECIENTE:\n' + historial.slice(-6).map(h =>
+          (h.rol === 'user' ? 'USUARIO: ' : 'COPILOTO: ') + String(h.texto || '').slice(0, 300)
+        ).join('\n')
+      : '';
+
+    const prompt = `Eres el COPILOTO de Comdiaz Shop, un asistente experto que ayuda al dueno del negocio a gestionar su tienda online (eBay, Temu, productos locales) y su APK privada.
+
+CONTEXTO ACTUAL DEL NEGOCIO (JSON):
+${JSON.stringify(contexto, null, 2)}
+${historialTexto}
+
+INSTRUCCIONES:
+- Responde en espanol, claro, breve (maximo 3 parrafos).
+- Si detectas problemas, mencionalos proactivamente.
+- Si sugieres una accion concreta, termina con: ACCION_SUGERIDA: {"tipo":"...","detalles":"..."}
+- Si solo es consulta, NO incluyas ACCION_SUGERIDA.
+- NUNCA ejecutes acciones por tu cuenta, solo SUGIERE.
+- Si no sabes algo, dilo honestamente.
+
+MENSAJE DEL USUARIO:
+${String(mensaje).slice(0, 1000)}
+
+RESPUESTA:`;
+
+    const respuesta = await preguntarIA(prompt, { json: false });
+
+    // ─── Parsear acciones sugeridas (si hay) ───
+    let texto = String(respuesta || '').trim();
+    let accionSugerida = null;
+    const matchAccion = texto.match(/ACCION_SUGERIDA:\s*(\{[^}]+\})/);
+    if (matchAccion) {
+      try {
+        accionSugerida = JSON.parse(matchAccion[1]);
+        texto = texto.replace(/ACCION_SUGERIDA:.*$/s, '').trim();
+      } catch(e) {}
+    }
+
+    logActivity('copilot_query', { mensaje: String(mensaje).slice(0, 100) });
+
+    return {
+      ok: true,
+      respuesta: texto,
+      accionSugerida,
+      contexto,
+      ts: new Date().toISOString(),
+    };
+  } catch (e) {
+    app.log.error('[COPILOT] ' + e.message);
+    return { ok: false, error: e.message };
+  }
+});
+
 app.get('/api/ai/status', async (req) => {
   const results = state.results || [];
   const manuales = state.productosManuales || [];

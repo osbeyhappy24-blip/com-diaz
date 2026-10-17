@@ -948,9 +948,15 @@ function computeNextRuns(times) {
 }
 
 function schedule() {
-  if (task) task.stop();
-  const expr = timesToCron(state.automation.publishTimes);
-  app.log.info(`Comdiaz · cron "${expr}" (${state.automation.publishTimes.join(', ')})`);
+  if (task) { task.stop(); task = null; }
+  const times = state.automation.publishTimes || [];
+  if (!times.length) {
+    app.log.info('[CRON-PUB] Sin horarios configurados (desactivado)');
+    state.automation.nextRuns = [];
+    return;
+  }
+  const expr = timesToCron(times);
+  app.log.info(`Comdiaz · cron "${expr}" (${times.join(', ')})`);
 
   task = cron.schedule(expr, async () => {
     if (!state.automation.running) {
@@ -1474,11 +1480,11 @@ app.post('/api/categories/remove', async (req) => {
 
 app.post('/api/publish-times', async (req) => {
   const times = Array.isArray(req.body?.times) ? req.body.times : null;
-  if (times && times.length) {
+  if (times !== null) {
     const tiemposViejos = state.automation.publishTimes;
     logActivity('publish_times', { viejo: tiemposViejos, nuevo: times });
     state.automation.publishTimes = times;
-    schedule();
+    schedule();  // schedule() maneja array vacío correctamente
   }
   return { ok: true, publishTimes: state.automation.publishTimes };
 });

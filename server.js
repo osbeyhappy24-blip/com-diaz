@@ -2351,18 +2351,56 @@ app.put('/api/manual/products/:id', async (req, reply) => {
   const body = req.body || {};
   const p = state.productosManuales[idx];
 
+  // ── Campos básicos ──
   if (body.title !== undefined) p.title = String(body.title).slice(0, 200);
-  if (body.description !== undefined) p.description = String(body.description).slice(0, 1000);
+  if (body.description !== undefined) p.description = String(body.description).slice(0, 2000);
   if (body.category !== undefined) p.category = String(body.category).slice(0, 80);
-  if (body.priceBase !== undefined) p.priceBase = Number(body.priceBase);
+  if (body.priceBase !== undefined) p.priceBase = Number(body.priceBase) || null;
   if (body.margenPct !== undefined) p.margenPct = Number(body.margenPct);
   if (body.cantidad !== undefined) p.cantidad = Number(body.cantidad);
   if (body.publicado !== undefined) p.publicado = !!body.publicado;
-  if (body.image !== undefined) p.image = body.image;
+  if (body.destacado !== undefined) p.destacado = !!body.destacado;
+  if (body.image !== undefined) { p.image = body.image; p.imagePrincipal = body.image; }
+  if (body.images !== undefined && Array.isArray(body.images)) {
+    p.images = body.images.slice(0, 8).map(u => String(u).slice(0, 500));
+    if (p.images.length) { p.image = p.images[0]; p.imagePrincipal = p.images[0]; }
+  }
 
-  // Recalcular precio venta
-  p.salePrice = +(p.priceBase * (1 + p.margenPct / 100)).toFixed(2);
+  // ── Campos locales ──
+  if (body.tipo !== undefined) p.tipo = body.tipo || null;
+  if (body.precioUSD !== undefined) p.precioUSD = body.precioUSD ? +Number(body.precioUSD).toFixed(2) : null;
+  if (body.precioCUP !== undefined) p.precioCUP = body.precioCUP ? +Number(body.precioCUP).toFixed(2) : null;
+  if (body.precioDirecto !== undefined) p.precioDirecto = !!body.precioDirecto;
+  if (body.notas !== undefined) p.notas = body.notas ? String(body.notas).slice(0, 500) : null;
 
+  if (body.estado !== undefined && ['nuevo','usado','reacondicionado'].includes(body.estado)) {
+    p.estado = body.estado;
+  }
+
+  if (body.provincia !== undefined) {
+    if (body.provincia && typeof CUBA_UBICACIONES !== 'undefined' && !CUBA_UBICACIONES[body.provincia]) {
+      reply.code(400); return { ok: false, error: 'Provincia inválida: ' + body.provincia };
+    }
+    p.provincia = body.provincia || null;
+  }
+
+  if (body.municipio !== undefined) {
+    if (body.municipio && p.provincia && typeof CUBA_UBICACIONES !== 'undefined' && CUBA_UBICACIONES[p.provincia] && !CUBA_UBICACIONES[p.provincia].includes(body.municipio)) {
+      reply.code(400); return { ok: false, error: 'Municipio inválido para ' + p.provincia };
+    }
+    p.municipio = body.municipio || null;
+  }
+
+  // ── Recalcular salePrice (prioridad: precioDirecto > precioUSD local > priceBase + margen) ──
+  if (p.precioDirecto && p.precioUSD) {
+    p.salePrice = +Number(p.precioUSD).toFixed(2);
+  } else if (p.tipo === 'local' && p.precioUSD) {
+    p.salePrice = +Number(p.precioUSD).toFixed(2);
+  } else if (p.priceBase) {
+    p.salePrice = +(p.priceBase * (1 + (p.margenPct || 0) / 100)).toFixed(2);
+  }
+
+  p.updatedAt = new Date().toISOString();
   logActivity('manual_edit', { id });
   await save();
   return { ok: true, product: p };

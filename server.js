@@ -1645,25 +1645,6 @@ app.post('/api/sre/pause-cron', async (req) => {
   return { ok: true, cron, paused, pausedCrons: state.sre.pausedCrons };
 });
 
-app.post('/api/sre/test-telegram', async () => {
-  if (!process.env.TELEGRAM_BOT_TOKEN) {
-    return { ok: false, error: 'TELEGRAM_BOT_TOKEN no configurado en Render' };
-  }
-  const ok = await notifyTelegram(
-    '✅ <b>Comdiaz SRE conectado</b>\n\n' +
-    'Recibirás aquí:\n' +
-    '• 🚨 Alertas SRE\n' +
-    '• 📅 Búsquedas nuevas\n' +
-    '• 🛒 Pedidos de clientes\n' +
-    '• 💬 Clicks de WhatsApp'
-  );
-  if (!ok) return { ok: false, error: 'No se pudo enviar. Verifica chat_id' };
-  state.sre = state.sre || {};
-  state.sre.telegramEnabled = true;
-  await save();
-  return { ok: true, mensaje: 'Mensaje enviado y alertas activadas' };
-});
-
 app.get('/api/sre/status', async () => ({
   ok: true,
   lastCheck: state.sre?.lastCheck || null,

@@ -2426,11 +2426,16 @@ app.post('/api/ai/copilot-stream', async (req, reply) => {
   const prompt = buildCopilotPrompt(contexto, historialTexto, mensaje);
 
   // Configurar SSE
+  const reqOrigin = req.headers.origin || '';
   reply.raw.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
     'X-Accel-Buffering': 'no',
+    'Access-Control-Allow-Origin': reqOrigin || '*',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Comdiaz-Key',
+    'Access-Control-Max-Age': '86400',
   });
 
   const sendSSE = (data) => {

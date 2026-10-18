@@ -827,10 +827,10 @@ function calculateScore(p) {
 }
 
 function diasSinVer(p) {
-  if (!p) return 999;
-  const fecha = p.ultimaVez || p.primeraVez || p.createdAt || p.foundAt;
-  if (!fecha) return 0;  // sin fecha = tratar como recién visto (no inactivar)
-  const ms = Date.now() - new Date(fecha).getTime();
+  if (!p) return 0;
+  // Si no tiene ultimaVez, NUNCA inactivar (evita borrar productos no verificados)
+  if (!p.ultimaVez) return 0;
+  const ms = Date.now() - new Date(p.ultimaVez).getTime();
   return Math.floor(ms / 86400000);
 }
 
@@ -1608,6 +1608,20 @@ function scheduleDaily() {
 
 // Endpoint público para healthcheck (UptimeRobot, Pingdom, etc.)
 // ═══ SRE endpoints ═══
+// Emergencia: reactivar TODOS los productos inactivos sin ultimaVez
+app.post('/api/sre/reactivate-all', async () => {
+  let reactivados = 0;
+  for (const p of (state.results || [])) {
+    if (p.activo === false && !p.ultimaVez) {
+      p.activo = true;
+      reactivados++;
+    }
+  }
+  if (reactivados > 0) await save();
+  logActivity('reactivate_all', { reactivados });
+  return { ok: true, reactivados };
+});
+
 app.get('/api/sre/status', async () => ({
   ok: true,
   lastCheck: state.sre?.lastCheck || null,

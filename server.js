@@ -1356,6 +1356,14 @@ async function _cronSearch(limitePorCat, sufijo, etiqueta, prioridadDefault) {
     state.automation.lastCronType = etiqueta;
     state.automation.lastCronFound = unique.length;
     await save();
+    // Notificar por Telegram
+    const icono = etiqueta === 'CRON-SEM' ? '📅' : '📆';
+    const titulo = etiqueta === 'CRON-SEM' ? 'BÚSQUEDA SEMANAL' : 'BÚSQUEDA DIARIA';
+    notifyTelegram(icono + ' <b>' + titulo + '</b>\n\n' +
+      '➕ Nuevos: <b>' + unique.length + '</b>\n' +
+      '📦 Total: ' + state.results.length + '\n' +
+      '✅ Publicados: ' + state.published.length
+    ).catch(() => {});
   } else {
     app.log.warn('[' + etiqueta + '] 0 productos - NO se sobrescribe');
   }
@@ -1635,6 +1643,25 @@ app.post('/api/sre/pause-cron', async (req) => {
   await save();
   logActivity('sre_pause_cron', { cron, paused });
   return { ok: true, cron, paused, pausedCrons: state.sre.pausedCrons };
+});
+
+app.post('/api/sre/test-telegram', async () => {
+  if (!process.env.TELEGRAM_BOT_TOKEN) {
+    return { ok: false, error: 'TELEGRAM_BOT_TOKEN no configurado en Render' };
+  }
+  const ok = await notifyTelegram(
+    '✅ <b>Comdiaz SRE conectado</b>\n\n' +
+    'Recibirás aquí:\n' +
+    '• 🚨 Alertas SRE\n' +
+    '• 📅 Búsquedas nuevas\n' +
+    '• 🛒 Pedidos de clientes\n' +
+    '• 💬 Clicks de WhatsApp'
+  );
+  if (!ok) return { ok: false, error: 'No se pudo enviar. Verifica chat_id' };
+  state.sre = state.sre || {};
+  state.sre.telegramEnabled = true;
+  await save();
+  return { ok: true, mensaje: 'Mensaje enviado y alertas activadas' };
 });
 
 app.get('/api/sre/status', async () => ({

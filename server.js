@@ -297,6 +297,15 @@ const DEFAULTS = {
       }
     }
   },
+  sre: {
+    snapshots: [],       // últimos 20 snapshots (10 horas)
+    alerts: [],          // últimas 50 alertas
+    lastCheck: null,
+    lastSnapshot: null,
+    pausedCrons: {},     // { cleanup: true, purga: false, ... }
+    telegramChatId: null,
+    telegramEnabled: false,
+  },
   shopStats: {
     totalActivos: 0,
     totalInactivos: 0,
@@ -1366,7 +1375,130 @@ async function runSearchDaily() {
   return _cronSearch(10, sufijo, 'CRON-DIA', 'oferta');
 }
 
+// ═══════════════════════════════════════════════════════
+// SRE — Vigilancia proactiva del sistema
+// ═══════════════════════════════════════════════════════
+
+async function sreTakeSnapshot() {
+  const results = state.results || [];
+  const manuales = state.productosManuales || [];
+  const locales = manuales.filter(p => p.tipo === 'local');
+  const conIA = results.filter(p => p.aiTitulo).length;
+  const activos = results.filter(p => p.activo !== false).length;
+
+  return {
+    ts: Date.now(),
+    fecha: new Date().toISOString(),
+    totalProductos: results.length,
+    publicados: (state.published || []).length,
+    conIA,
+    sinIA: results.length - conIA,
+    activos,
+    inactivos: results.length - activos,
+    locales: locales.length,
+    localesPublicados: locales.filter(p => p.publicado).length,
+    pedidosHoy: (state.orders || []).filter(o => (o.createdAt || '').startsWith(new Date().toISOString().slice(0, 10))).length,
+  };
+}
+
+async function sreNotificarTelegram(mensaje) {
+  const cfg = state.sre || {};
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = cfg.telegramChatId || process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId || !cfg.telegramEnabled) return false;
+  try {
+    await fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: mensaje, parse_mode: 'HTML' }),
+    });
+    return true;
+  } catch(e) {
+    app.log.warn('[SRE] Telegram falló: ' + e.message);
+    return false;
+  }
+}
+
+async function sreCheck() {
+  state.sre = state.sre || { snapshots: [], alerts: [], pausedCrons: {} };
+  const now = await sreTakeSnapshot();
+  const snapshots = state.sre.snapshots || [];
+  const prev = snapshots[snapshots.length - 1];
+
+  const alertasNuevas = [];
+
+  if (prev) {
+    // REGLA 1 (ROJA): Caída del catálogo > 5%
+    const caidaCatalogo = prev.totalProductos > 0
+      ? ((prev.totalProductos - now.totalProductos) / prev.totalProductos) * 100
+      : 0;
+    if (caidaCatalogo > 5) {
+      alertasNuevas.push({
+        tipo: 'ROJA',
+        regla: 'caida_catalogo',
+        detalle: 'Catálogo cayó ' + caidaCatalogo.toFixed(1) + '% en 30 min (' + prev.totalProductos + ' → ' + now.totalProductos + ')',
+        ts: Date.now(),
+        accion: 'Pausar cleanup automáticamente',
+      });
+      // Pausar cleanup automáticamente
+      state.sre.pausedCrons = state.sre.pausedCrons || {};
+      state.sre.pausedCrons.cleanup = true;
+    }
+
+    // REGLA 2 (NARANJA): Caída de productos con IA > 5%
+    const caidaIA = prev.conIA > 0
+      ? ((prev.conIA - now.conIA) / prev.conIA) * 100
+      : 0;
+    if (caidaIA > 5) {
+      alertasNuevas.push({
+        tipo: 'NARANJA',
+        regla: 'caida_ia',
+        detalle: 'Productos con IA cayeron ' + caidaIA.toFixed(1) + '% (' + prev.conIA + ' → ' + now.conIA + ')',
+        ts: Date.now(),
+        accion: 'Revisar purga o borrado accidental',
+      });
+    }
+
+    // REGLA 3 (AMARILLA): Locales desaparecen
+    if (prev.locales > 0 && now.locales < prev.locales) {
+      alertasNuevas.push({
+        tipo: 'AMARILLA',
+        regla: 'caida_locales',
+        detalle: 'Locales: ' + prev.locales + ' → ' + now.locales,
+        ts: Date.now(),
+        accion: 'Verificar guardado de productos locales',
+      });
+    }
+  }
+
+  // Guardar snapshot (máx 20)
+  snapshots.push(now);
+  if (snapshots.length > 20) snapshots.shift();
+  state.sre.snapshots = snapshots;
+  state.sre.lastCheck = now.fecha;
+  state.sre.lastSnapshot = now;
+
+  // Guardar alertas (máx 50)
+  for (const a of alertasNuevas) {
+    state.sre.alerts.push(a);
+    app.log.warn('[SRE] 🚨 ' + a.tipo + ': ' + a.detalle);
+    // Notificar por Telegram
+    const emoji = a.tipo === 'ROJA' ? '🚨' : a.tipo === 'NARANJA' ? '⚠️' : '💡';
+    await sreNotificarTelegram(emoji + ' <b>' + a.tipo + '</b>\n' + a.detalle + '\n\n' + a.accion);
+  }
+  if (state.sre.alerts.length > 50) state.sre.alerts = state.sre.alerts.slice(-50);
+
+  await save();
+
+  return { alertas: alertasNuevas.length, snapshot: now };
+}
+
 async function cleanupProductos() {
+  // Verificar si SRE pausó el cleanup
+  if (state.sre && state.sre.pausedCrons && state.sre.pausedCrons.cleanup) {
+    app.log.warn('[CLEANUP] ⏸ PAUSADO por SRE (alerta activa)');
+    return 0;
+  }
   let marcadosInactivos = 0;
   let reactivados = 0;
   for (const p of (state.results || [])) {
@@ -1445,7 +1577,7 @@ async function purgaProductos() {
   return eliminados;
 }
 
-let cronWeekly = null, cronDaily = null, cronCleanup = null, cronPurga = null;
+let cronWeekly = null, cronDaily = null, cronCleanup = null, cronPurga = null, cronSRE = null;
 function scheduleDaily() {
   if (cronWeekly) cronWeekly.stop();
   if (cronDaily) cronDaily.stop();
@@ -1466,10 +1598,53 @@ function scheduleDaily() {
   cronPurga = cron.schedule('0 4 * * 0', async function() {
     try { await purgaProductos(); } catch (e) { app.log.error('[PURGA] ' + e.message); }
   }, { timezone: tz });
-  app.log.info('[CRON-V2] Semanal Dom 05:00 | Diario L-S 05:00 | Cleanup 03:00 | Purga Dom 04:00');
+  // SRE: cada 30 min
+  if (cronSRE) cronSRE.stop();
+  cronSRE = cron.schedule('*/30 * * * *', async function() {
+    try { await sreCheck(); } catch (e) { app.log.error('[SRE] ' + e.message); }
+  }, { timezone: tz });
+  app.log.info('[CRON-V2] Semanal Dom 05:00 | Diario L-S 05:00 | Cleanup 03:00 | Purga Dom 04:00 | SRE cada 30min');
 }
 
 // Endpoint público para healthcheck (UptimeRobot, Pingdom, etc.)
+// ═══ SRE endpoints ═══
+app.get('/api/sre/status', async () => ({
+  ok: true,
+  lastCheck: state.sre?.lastCheck || null,
+  lastSnapshot: state.sre?.lastSnapshot || null,
+  pausedCrons: state.sre?.pausedCrons || {},
+  alertasRecientes: (state.sre?.alerts || []).slice(-10),
+  totalSnapshots: (state.sre?.snapshots || []).length,
+}));
+
+app.get('/api/sre/alerts', async () => ({
+  ok: true,
+  total: (state.sre?.alerts || []).length,
+  alertas: (state.sre?.alerts || []).slice(-50),
+}));
+
+app.post('/api/sre/check', async () => {
+  const r = await sreCheck();
+  return { ok: true, ...r };
+});
+
+app.post('/api/sre/resume-cron', async (req) => {
+  const cron = req.body?.cron;
+  if (!cron) return { ok: false, error: 'Falta nombre de cron' };
+  if (state.sre?.pausedCrons) state.sre.pausedCrons[cron] = false;
+  await save();
+  return { ok: true, pausedCrons: state.sre.pausedCrons };
+});
+
+app.post('/api/sre/config-telegram', async (req) => {
+  const { chatId, enabled } = req.body || {};
+  state.sre = state.sre || {};
+  if (chatId !== undefined) state.sre.telegramChatId = chatId;
+  if (enabled !== undefined) state.sre.telegramEnabled = !!enabled;
+  await save();
+  return { ok: true, telegramChatId: state.sre.telegramChatId, telegramEnabled: state.sre.telegramEnabled };
+});
+
 app.get('/health', async () => ({ ok: true, service: 'comdiaz', ts: Date.now() }));
 
 app.get('/api/state', async () => state);

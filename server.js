@@ -1352,6 +1352,9 @@ async function _cronSearch(limitePorCat, sufijo, etiqueta, prioridadDefault) {
     state.published = Array.from(pubSet);
     app.log.info('[' + etiqueta + '] ' + antes + ' -> ' + state.results.length + ' productos (traidos: ' + unique.length + ')');
     logActivity('cron_' + etiqueta.toLowerCase(), { encontrados: unique.length, total: state.results.length });
+    state.automation.lastRun = new Date().toISOString();
+    state.automation.lastCronType = etiqueta;
+    state.automation.lastCronFound = unique.length;
     await save();
   } else {
     app.log.warn('[' + etiqueta + '] 0 productos - NO se sobrescribe');
@@ -1761,6 +1764,7 @@ app.post('/api/publish-times', async (req) => {
     logActivity('publish_times', { viejo: tiemposViejos, nuevo: times });
     state.automation.publishTimes = times;
     schedule();  // schedule() maneja array vacío correctamente
+    await save();  // ← CRÍTICO: persistir cambio
   }
   return { ok: true, publishTimes: state.automation.publishTimes };
 });

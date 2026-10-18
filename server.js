@@ -677,7 +677,7 @@ async function guardarEnNube() {
         publishTimes: state.automation.publishTimes,
       },
       sources: state.sources,
-      published: (state.published || []).slice(0, 3000),
+      published: (state.published || []).slice(0, 10000),
       // Guardar solo los ultimos 100 productos eBay (publicados) para recuperar tras reinicio
       results: (state.results || []).slice(0, 10000).map(r => ({
         id: r.id,
@@ -1620,6 +1620,18 @@ app.post('/api/sre/reactivate-all', async () => {
   if (reactivados > 0) await save();
   logActivity('reactivate_all', { reactivados });
   return { ok: true, reactivados };
+});
+
+app.post('/api/sre/pause-cron', async (req) => {
+  const cron = req.body?.cron;
+  const paused = req.body?.paused !== false;
+  if (!cron) return { ok: false, error: 'Falta nombre de cron' };
+  state.sre = state.sre || {};
+  state.sre.pausedCrons = state.sre.pausedCrons || {};
+  state.sre.pausedCrons[cron] = paused;
+  await save();
+  logActivity('sre_pause_cron', { cron, paused });
+  return { ok: true, cron, paused, pausedCrons: state.sre.pausedCrons };
 });
 
 app.get('/api/sre/status', async () => ({

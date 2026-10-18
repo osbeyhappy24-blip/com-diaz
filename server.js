@@ -818,8 +818,10 @@ function calculateScore(p) {
 }
 
 function diasSinVer(p) {
-  if (!p || !p.ultimaVez) return 999;
-  const ms = Date.now() - new Date(p.ultimaVez).getTime();
+  if (!p) return 999;
+  const fecha = p.ultimaVez || p.primeraVez || p.createdAt || p.foundAt;
+  if (!fecha) return 0;  // sin fecha = tratar como recién visto (no inactivar)
+  const ms = Date.now() - new Date(fecha).getTime();
   return Math.floor(ms / 86400000);
 }
 
@@ -1821,6 +1823,20 @@ setInterval(() => {
 
 // GET público: catálogo de productos publicados
 // POST: sincronizar published con results activos (limpieza + publicación masiva)
+// Temporal: reactivar productos sin ultimaVez (bug de cleanup)
+app.post('/api/manual/reactivate-old', async (req) => {
+  let reactivados = 0;
+  for (const p of (state.results || [])) {
+    if (p.activo === false && !p.ultimaVez && !p.primeraVez) {
+      p.activo = true;
+      p.ultimaVez = new Date().toISOString().slice(0, 10);
+      reactivados++;
+    }
+  }
+  if (reactivados > 0) await save();
+  return { ok: true, reactivados };
+});
+
 app.post('/api/manual/sync-published', async (req) => {
   const results = state.results || [];
   const resultsIds = new Set(results.map(r => r.id).filter(Boolean));

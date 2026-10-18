@@ -2449,14 +2449,24 @@ app.get('/api/ai/usage', async () => {
   const total = aiUsageCounters.productos + aiUsageCounters.fotos +
                 aiUsageCounters.copiloto + aiUsageCounters.banners +
                 aiUsageCounters.descripcion + aiUsageCounters.otros;
-  const LIMITE = 3000;
+  // Calcular límite dinámico según número de keys configuradas
+  let numKeys = 0;
+  if (process.env.GEMINI_API_KEY) numKeys++;
+  if (process.env.GEMINI_API_KEY_2) numKeys++;
+  if (process.env.GEMINI_API_KEY_3) numKeys++;
+  if (process.env.GEMINI_API_KEY_4) numKeys++;
+  if (process.env.GEMINI_API_KEY_5) numKeys++;
+  const LIMITE_POR_KEY = 1500;
+  const LIMITE = numKeys * LIMITE_POR_KEY;
   return {
     ok: true,
     fecha: aiUsageCounters.fecha,
     detalle: { ...aiUsageCounters, fecha: undefined },
     total, limite: LIMITE,
+    keys: numKeys,
+    limitePorKey: LIMITE_POR_KEY,
     restante: Math.max(0, LIMITE - total),
-    porcentaje: Math.round((total / LIMITE) * 1000) / 10,
+    porcentaje: LIMITE > 0 ? Math.round((total / LIMITE) * 1000) / 10 : 0,
   };
 });
 

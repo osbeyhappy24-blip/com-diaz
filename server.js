@@ -1479,6 +1479,31 @@ async function _cronSearch(limitePorCat, sufijo, etiqueta, prioridadDefault) {
   return unique.length;
 }
 
+async function runSearchMonthly() {
+  app.log.info('[CRON-MES] Búsqueda mensual: ofertas + huecos');
+  const activos = (state.results || []).filter(r => r.activo !== false).length;
+  const disponibles = CATALOG_CAP - activos;
+  
+  // 1) Primero: actualizar precios de todos los existentes (no añade)
+  app.log.info('[CRON-MES] Fase 1: actualizar precios existentes');
+  await soloActualizarPrecios('', 'CRON-MES-PRECIOS');
+  
+  // 2) Buscar ofertas SOLO si hay huecos disponibles
+  if (disponibles > 0) {
+    app.log.info('[CRON-MES] Fase 2: buscar ofertas (huecos disponibles: ' + disponibles + ')');
+    await _cronSearch(20, ' deals', 'CRON-MES-DEALS', 'oferta');
+    await _cronSearch(20, ' sale', 'CRON-MES-SALE', 'rebaja');
+    await _cronSearch(20, ' clearance', 'CRON-MES-CLEARANCE', 'rebaja');
+  } else {
+    app.log.info('[CRON-MES] Sin huecos. Solo se actualizaron precios.');
+  }
+  
+  notifyTelegram('🗓️ <b>BÚSQUEDA MENSUAL</b>\n\n' +
+    '📊 Activos: ' + activos + '/' + CATALOG_CAP + '\n' +
+    '📦 Huecos: ' + disponibles + '\n' +
+    '✅ Ciclo completado').catch(() => {});
+}
+
 async function runSearchWeekly() {
   app.log.info('[CRON-SEM] Búsqueda semanal completa');
   return _cronSearch(50, '', 'CRON-SEM', 'normal');
@@ -1697,7 +1722,7 @@ async function purgaProductos() {
   return eliminados;
 }
 
-let cronWeekly = null, cronDaily = null, cronCleanup = null, cronPurga = null, cronSRE = null;
+let cronWeekly = null, cronDaily = null, cronCleanup = null, cronPurga = null, cronSRE = null, cronMensual = null;
 function scheduleDaily() {
   if (cronWeekly) cronWeekly.stop();
   if (cronDaily) cronDaily.stop();
@@ -1723,7 +1748,18 @@ function scheduleDaily() {
   cronSRE = cron.schedule('*/30 * * * *', async function() {
     try { await sreCheck(); } catch (e) { app.log.error('[SRE] ' + e.message); }
   }, { timezone: tz });
-  app.log.info('[CRON-V2] Semanal Dom 05:00 | Diario L-S 05:00 | Cleanup 03:00 | Purga Dom 04:00 | SRE cada 30min');
+  
+  // ═══ CRON MENSUAL: Ofertas + productos nuevos (1er domingo del mes a las 06:00) ═══
+  if (cronMensual) cronMensual.stop();
+  cronMensual = cron.schedule('0 6 1-7 * 0', async function() {
+    app.log.info('[CRON-MES] Ejecutando búsqueda mensual de ofertas');
+    try {
+      await runSearchMonthly();
+    } catch (e) {
+      app.log.error('[CRON-MES] ' + e.message);
+    }
+  }, { timezone: tz });
+  app.log.info('[CRON-V2] Semanal Dom 05:00 | Diario L-S 05:00 | Cleanup 03:00 | Purga Dom 04:00 | SRE cada 30min | Mensual 1er Dom 06:00');
 }
 
 // Endpoint público para healthcheck (UptimeRobot, Pingdom, etc.)

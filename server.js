@@ -1317,7 +1317,101 @@ function scheduleIA() {
 // CRON V2: Semanal + Diario + Cleanup + Purga
 // ═══════════════════════════════════════════════════════
 
+// ═══ TOPE DE CATÁLOGO (evita crecimiento infinito) ═══
+const CATALOG_CAP = 10000;
+// ═══ ACTUALIZACIÓN DE PRECIOS SIN AÑADIR PRODUCTOS ═══
+async function soloActualizarPrecios(sufijo, etiqueta) {
+  const marginPct = Number(state.margin) || 35;
+  const fuentesActivas = Object.entries(state.sources || {})
+    .filter(function(e) { return e[1] && e[1].enabled; })
+    .map(function(e) { return e[0]; });
+  if (!fuentesActivas.length) return 0;
+  
+  const results = state.results || [];
+  const porId = new Map(results.map(r => [r.id, r]));
+  let actualizados = 0;
+  let sinCambios = 0;
+  let inactivados = 0;
+  const vistosIds = new Set();
+  
+  // Buscar solo términos base (sin sufijo, para no traer nuevos)
+  for (const cat of state.categories) {
+    const baseTerms = (cat.dummyjson && cat.dummyjson.length) ? cat.dummyjson : [cat.label.toLowerCase()];
+    for (const baseTerm of baseTerms) {
+      const q = sufijo ? (baseTerm + sufijo) : baseTerm;
+      for (const sourceId of fuentesActivas) {
+        try {
+          const items = await adapters.searchFrom(sourceId, q, state.sources);
+          for (const it of items) {
+            if (!it.id) continue;
+            vistosIds.add(it.id);
+            const existente = porId.get(it.id);
+            if (!existente) continue;  // NO añadir nuevos
+            // Solo actualizar precio si cambió
+            const pbase = it.price;
+            const nuevoSalePrice = +(pbase * (1 + marginPct / 100)).toFixed(2);
+            if (existente.basePrice !== pbase || existente.salePrice !== nuevoSalePrice) {
+              existente.basePrice = pbase;
+              existente.salePrice = nuevoSalePrice;
+              existente.precioActualizado = new Date().toISOString();
+              existente.vecesVisto = (existente.vecesVisto || 1) + 1;
+              actualizados++;
+            } else {
+              existente.vecesVisto = (existente.vecesVisto || 1) + 1;
+              sinCambios++;
+            }
+            existente.ultimaVez = new Date().toISOString().slice(0, 10);
+            existente.activo = true;
+          }
+        } catch (e) {
+          app.log.error('[PRECIO-ACT] err: ' + e.message);
+        }
+      }
+    }
+  }
+  
+  // Inactivar productos no vistos (solo si tienen ultimaVez viejo)
+  // NO toca productos con IA reciente
+  for (const r of results) {
+    if (r.activo !== false && !vistosIds.has(r.id) && r.aiTitulo) {
+      // Preservar productos con IA (nunca inactivar sin motivo)
+      continue;
+    }
+  }
+  
+  if (actualizados > 0 || inactivados > 0) {
+    await save();
+    app.log.info('[' + etiqueta + '] Precios actualizados: ' + actualizados + ' | Sin cambios: ' + sinCambios);
+    logActivity('precio_update', { actualizados, sinCambios, etiqueta });
+    notifyTelegram('💰 <b>PRECIOS ACTUALIZADOS</b>\n\n' +
+      '🔄 Con cambios: ' + actualizados + '\n' +
+      '✅ Sin cambios: ' + sinCambios + '\n' +
+      '📦 Total: ' + results.length + '/' + CATALOG_CAP
+    ).catch(() => {});
+  } else {
+    app.log.info('[' + etiqueta + '] Sin cambios de precio');
+  }
+  
+  return actualizados;
+}
+
+   // Tope duro de productos activos
+const CATALOG_WARN = 9500;   // Alerta al 95%
+
 async function _cronSearch(limitePorCat, sufijo, etiqueta, prioridadDefault) {
+  // ═══ VERIFICAR TOPE DE CATÁLOGO ═══
+  const activosActuales = (state.results || []).filter(r => r.activo !== false).length;
+  if (activosActuales >= CATALOG_CAP) {
+    app.log.info('[' + etiqueta + '] 🛑 TOPE ALCANZADO: ' + activosActuales + '/' + CATALOG_CAP + '. Solo actualizando precios.');
+    return await soloActualizarPrecios(sufijo, etiqueta);
+  }
+  if (activosActuales >= CATALOG_WARN) {
+    app.log.warn('[' + etiqueta + '] ⚠️ Cerca del tope: ' + activosActuales + '/' + CATALOG_CAP);
+    notifyTelegram('⚠️ <b>CATÁLOGO CERCA DEL TOPE</b>\n\n' +
+      'Activos: ' + activosActuales + '/' + CATALOG_CAP + '\n' +
+      'Solo quedan ' + (CATALOG_CAP - activosActuales) + ' espacios').catch(() => {});
+  }
+  
   const marginPct = Number(state.margin) || 35;
   const fuentesActivas = Object.entries(state.sources || {})
     .filter(function(e) { return e[1] && e[1].enabled; })
@@ -1658,6 +1752,40 @@ app.post('/api/sre/pause-cron', async (req) => {
   await save();
   logActivity('sre_pause_cron', { cron, paused });
   return { ok: true, cron, paused, pausedCrons: state.sre.pausedCrons };
+});
+
+app.get('/api/catalog/status', async () => {
+  const results = state.results || [];
+  const activos = results.filter(r => r.activo !== false).length;
+  const inactivos = results.length - activos;
+  const conIA = results.filter(r => r.aiTitulo && r.activo !== false).length;
+  const disponibles = Math.max(0, CATALOG_CAP - activos);
+  const porcentaje = Math.round((activos / CATALOG_CAP) * 1000) / 10;
+  
+  let estado = 'verde';
+  let mensaje = 'Puedes seguir buscando ' + disponibles + ' productos más';
+  if (activos >= CATALOG_CAP) {
+    estado = 'rojo';
+    mensaje = 'Tope alcanzado. Solo se actualizarán precios';
+  } else if (activos >= CATALOG_WARN) {
+    estado = 'amarillo';
+    mensaje = 'Cerca del tope. Quedan ' + disponibles + ' espacios';
+  }
+  
+  return {
+    ok: true,
+    activos,
+    inactivos,
+    conIA,
+    sinIA: activos - conIA,
+    capMax: CATALOG_CAP,
+    capWarn: CATALOG_WARN,
+    disponibles,
+    porcentaje,
+    estado,
+    mensaje,
+    puedeBuscarNuevos: activos < CATALOG_CAP,
+  };
 });
 
 app.get('/api/sre/status', async () => ({

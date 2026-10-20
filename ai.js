@@ -11,8 +11,30 @@ function leerEnv() {
   } catch {}
 }
 
-// Obtener TODAS las keys disponibles (rotacion automatica)
-function obtenerKeys() {
+// Obtener keys por pool (con fallback al pool core si no hay keys del pool)
+function obtenerKeys(pool = 'core') {
+  if (pool === 'bulk') {
+    const bulk = [];
+    if (process.env.GEMINI_BULK_KEY_1) bulk.push(process.env.GEMINI_BULK_KEY_1);
+    if (process.env.GEMINI_BULK_KEY_2) bulk.push(process.env.GEMINI_BULK_KEY_2);
+    if (process.env.GEMINI_BULK_KEY_3) bulk.push(process.env.GEMINI_BULK_KEY_3);
+    if (bulk.length > 0) return bulk;
+    // Fallback al core si no hay bulk keys
+    console.warn('[IA] Pool BULK sin keys, usando CORE como fallback');
+    return obtenerKeys('core');
+  }
+  
+  if (pool === 'copilot') {
+    const copilot = [];
+    if (process.env.GEMINI_COPILOT_KEY_1) copilot.push(process.env.GEMINI_COPILOT_KEY_1);
+    if (process.env.GEMINI_COPILOT_KEY_2) copilot.push(process.env.GEMINI_COPILOT_KEY_2);
+    if (copilot.length > 0) return copilot;
+    // Fallback al core si no hay copilot keys
+    console.warn('[IA] Pool COPILOT sin keys, usando CORE como fallback');
+    return obtenerKeys('core');
+  }
+  
+  // Pool 'core' (default)
   const keys = [];
   if (process.env.GEMINI_API_KEY) keys.push(process.env.GEMINI_API_KEY);
   if (process.env.GEMINI_API_KEY_2) keys.push(process.env.GEMINI_API_KEY_2);
@@ -50,9 +72,9 @@ function bloquearKey(k, ms) {
   keysBloqueadas.set(k, Date.now() + ms);
 }
 
-export async function preguntarIA(prompt, { json = false, images = [] } = {}) {
+export async function preguntarIA(prompt, { json = false, images = [], pool = 'core' } = {}) {
   leerEnv();
-  const keys = obtenerKeys();
+  const keys = obtenerKeys(pool);
   const model = process.env.GEMINI_MODEL;
   if (!keys.length) throw new Error('Falta GEMINI_API_KEY');
   if (!model) throw new Error('Falta GEMINI_MODEL');
@@ -127,8 +149,8 @@ export async function preguntarIA(prompt, { json = false, images = [] } = {}) {
   throw new Error('IA ocupada (' + ultimoError + '). Intenta en unos minutos.');
 }
 
-export function infoKeys() {
-  const keys = obtenerKeys();
+export function infoKeys(pool = 'core') {
+  const keys = obtenerKeys(pool);
   const ahora = Date.now();
   return keys.map(k => ({
     sufijo: '...' + k.slice(-8),

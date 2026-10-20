@@ -2671,7 +2671,7 @@ app.post('/api/ai/copilot-stream', async (req, reply) => {
     // ─── FALLBACK: Gemini (sin streaming real, simulamos) ───
     if (!respuestaCompleta) {
       proveedor = 'gemini';
-      const respuesta = await preguntarIA(prompt, { json: false });
+      const respuesta = await preguntarIA(prompt, { json: false, pool: 'copilot' });
       respuestaCompleta = String(respuesta || '').trim();
       // Simular streaming: enviar en trozos de 8 caracteres
       const chunkSize = 8;
@@ -2921,6 +2921,7 @@ IMPORTANTE:
     const txt = await preguntarIA(prompt, {
       json: true,
       images: [{ mimeType, data: base64Data }],
+      pool: 'bulk',  // Carga masiva usa su propio pool
     });
 
     let sugerencia;

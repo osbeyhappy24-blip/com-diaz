@@ -2847,20 +2847,37 @@ app.get('/api/ai/usage', async () => {
                 aiUsageCounters.copiloto + aiUsageCounters.banners +
                 aiUsageCounters.descripcion + aiUsageCounters.otros;
   // Calcular límite dinámico según número de keys configuradas
-  let numKeys = 0;
-  if (process.env.GEMINI_API_KEY) numKeys++;
-  if (process.env.GEMINI_API_KEY_2) numKeys++;
-  if (process.env.GEMINI_API_KEY_3) numKeys++;
-  if (process.env.GEMINI_API_KEY_4) numKeys++;
-  if (process.env.GEMINI_API_KEY_5) numKeys++;
+  // Contar keys por pool
+  const keysCore = [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY_2,
+    process.env.GEMINI_API_KEY_3
+  ].filter(Boolean).length;
+  const keysBulk = [
+    process.env.GEMINI_BULK_KEY_1,
+    process.env.GEMINI_BULK_KEY_2,
+    process.env.GEMINI_BULK_KEY_3
+  ].filter(Boolean).length;
+  const keysCopilot = [
+    process.env.GEMINI_COPILOT_KEY_1,
+    process.env.GEMINI_COPILOT_KEY_2
+  ].filter(Boolean).length;
+  
+  const numKeys = keysCore + keysBulk + keysCopilot;
   const LIMITE_POR_KEY = 1500;
   const LIMITE = numKeys * LIMITE_POR_KEY;
+  
   return {
     ok: true,
     fecha: aiUsageCounters.fecha,
     detalle: { ...aiUsageCounters, fecha: undefined },
     total, limite: LIMITE,
     keys: numKeys,
+    pools: {
+      core:    { keys: keysCore,    limite: keysCore * LIMITE_POR_KEY,    uso: aiUsageCounters.productos },
+      bulk:    { keys: keysBulk,    limite: keysBulk * LIMITE_POR_KEY,    uso: aiUsageCounters.fotos },
+      copilot: { keys: keysCopilot, limite: keysCopilot * LIMITE_POR_KEY, uso: aiUsageCounters.copiloto },
+    },
     limitePorKey: LIMITE_POR_KEY,
     restante: Math.max(0, LIMITE - total),
     porcentaje: LIMITE > 0 ? Math.round((total / LIMITE) * 1000) / 10 : 0,

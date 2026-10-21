@@ -1125,6 +1125,95 @@ function schedule() {
 let iaTask = null;
 let iaProcesando = false;
 
+// ═══ DESCRIPCIONES DE PRODUCTOS LOCALES (pool BULK) ═══
+async function procesarDescripcionesLocales(max = 100) {
+  if (typeof iaLocalProcesando !== 'undefined' && iaLocalProcesando) {
+    app.log.info('[IA-LOCAL] Ya hay un proceso en curso, saltando');
+    return { procesados: 0, saltado: true };
+  }
+  global.iaLocalProcesando = true;
+  const inicio = Date.now();
+  let procesados = 0;
+  let errores = 0;
+
+  try {
+    // Solo productos locales activos SIN aiDescripcion
+    const pendientes = (state.productosManuales || [])
+      .filter(p => 
+        p.tipo === 'local' && 
+        p.publicado !== false && 
+        p.title && 
+        !p.aiDescripcion
+      )
+      .slice(0, max);
+    
+    app.log.info('[IA-LOCAL] Pendientes sin descripción: ' + pendientes.length + ' (max ' + max + ')');
+
+    for (let i = 0; i < pendientes.length; i++) {
+      const prod = pendientes[i];
+      try {
+        const prompt = 'Eres redactor de una tienda en línea que vende a clientes en Cuba. ' +
+          'Genera una descripción atractiva y breve (2 o 3 frases, máximo 400 caracteres) para este producto. ' +
+          'Sin inventar medidas, marcas ni características que no estén en los datos. ' +
+          'En español, claro, sin emojis excesivos. ' +
+          'Producto: ' + String(prod.title || '').slice(0, 200) + '. ' +
+          'Categoría: ' + String(prod.category || 'General') + '. ' +
+          'Precio: $' + (prod.salePrice || 0) + ' USD. ' +
+          'Estado: ' + (prod.estado || 'nuevo') + '. ' +
+          'Provincia: ' + (prod.provincia || 'Cuba') + '.';
+
+        const desc = await preguntarIA(prompt, { 
+          json: false, 
+          pool: 'bulk'  // ← usa las 3 keys BULK
+        });
+
+        if (desc && String(desc).trim().length > 20) {
+          const ref = (state.productosManuales || []).find(p => p.id === prod.id);
+          if (ref) {
+            ref.aiDescripcion = String(desc).trim().slice(0, 500);
+            ref.aiDescripcionUpdated = new Date().toISOString();
+            aiResetIfNewDay();
+            aiUsageCounters.descripcion++;
+            procesados++;
+          }
+        }
+
+        // Guardar cada 5 productos
+        if (procesados > 0 && procesados % 5 === 0) {
+          await save();
+        }
+
+        // Rate limit: ~3s entre peticiones
+        await new Promise(s => setTimeout(s, 3000));
+      } catch (e) {
+        errores++;
+        app.log.error('[IA-LOCAL] Error en ' + prod.id + ': ' + e.message);
+        if (errores >= 5 && errores % 5 === 0) {
+          app.log.warn('[IA-LOCAL] 5 errores, esperando 60s...');
+          await new Promise(s => setTimeout(s, 60000));
+        }
+      }
+    }
+
+    if (procesados > 0) await save();
+
+    const dur = Math.round((Date.now() - inicio) / 1000);
+    app.log.info('[IA-LOCAL] Completado: ' + procesados + ' procesados, ' + errores + ' errores, ' + dur + 's');
+    logActivity('ia_local_desc', { procesados, errores, dur });
+    
+    if (procesados > 0) {
+      notifyTelegram('📝 <b>DESCRIPCIONES LOCALES</b>\n\n' +
+        '✅ Procesadas: ' + procesados + '\n' +
+        '❌ Errores: ' + errores + '\n' +
+        '⏱ Duración: ' + dur + 's').catch(() => {});
+    }
+
+    return { procesados, errores, dur };
+  } finally {
+    global.iaLocalProcesando = false;
+  }
+}
+
 async function procesarProductosSinIA(max = 100) {
   if (iaProcesando) {
     app.log.info('[IA-AUTO] Ya hay un proceso en curso, saltando');
@@ -1722,7 +1811,7 @@ async function purgaProductos() {
   return eliminados;
 }
 
-let cronWeekly = null, cronDaily = null, cronCleanup = null, cronPurga = null, cronSRE = null, cronMensual = null;
+let cronWeekly = null, cronDaily = null, cronCleanup = null, cronPurga = null, cronSRE = null, cronMensual = null, cronLocalDesc = null;
 function scheduleDaily() {
   if (cronWeekly) cronWeekly.stop();
   if (cronDaily) cronDaily.stop();
@@ -1759,7 +1848,14 @@ function scheduleDaily() {
       app.log.error('[CRON-MES] ' + e.message);
     }
   }, { timezone: tz });
-  app.log.info('[CRON-V2] Semanal Dom 05:00 | Diario L-S 05:00 | Cleanup 03:00 | Purga Dom 04:00 | SRE cada 30min | Mensual 1er Dom 06:00');
+
+  // ═══ CRON-LOCAL-DESC: cada 2h genera descripciones de locales (pool BULK) ═══
+  if (cronLocalDesc) cronLocalDesc.stop();
+  cronLocalDesc = cron.schedule('0 */2 * * *', async function() {
+    try { await procesarDescripcionesLocales(100); } catch (e) { app.log.error('[CRON-LOCAL-DESC] ' + e.message); }
+  }, { timezone: tz });
+
+  app.log.info('[CRON-V2] Semanal Dom 05:00 | Diario L-S 05:00 | Cleanup 03:00 | Purga Dom 04:00 | SRE cada 30min | Mensual 1er Dom 06:00 | LocalDesc cada 2h');
 }
 
 // Endpoint público para healthcheck (UptimeRobot, Pingdom, etc.)

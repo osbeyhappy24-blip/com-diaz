@@ -2180,6 +2180,245 @@ app.get('/api/home', async () => {
   };
 });
 
+// ═══════════════════════════════════════════════════════
+// PRODUCTOS DE VENDEDORES (CRUD + cuota)
+// ═══════════════════════════════════════════════════════
+
+// POST: crear producto
+app.post('/api/seller/products', async (req, reply) => {
+  try {
+    const payload = requireSeller(req);
+    if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+    
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(payload.sellerId));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Cuenta no existe' }; }
+    if (seller.estado !== 'aprobado') {
+      reply.code(403); return { ok: false, error: 'Cuenta pendiente de aprobación' };
+    }
+    
+    const plan = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(seller.plan_id));
+    const cuotaMax = plan ? plan.max_productos : 50;
+    
+    if (cuotaMax !== -1) {
+      const actuales = await dbCount('seller_products', '?seller_id=eq.' + encodeURIComponent(seller.id) + '&activo=eq.true');
+      if (actuales >= cuotaMax) {
+        reply.code(429); return { ok: false, error: 'Cuota alcanzada (' + cuotaMax + ' productos). Actualiza tu plan.' };
+      }
+    }
+    
+    const body = req.body || {};
+    if (!body.titulo || String(body.titulo).trim().length < 3) {
+      reply.code(400); return { ok: false, error: 'Título mínimo 3 caracteres' };
+    }
+    if (!body.precio_usd || Number(body.precio_usd) <= 0) {
+      reply.code(400); return { ok: false, error: 'Precio USD requerido' };
+    }
+    
+    const nuevo = await dbInsert('seller_products', {
+      seller_id: seller.id,
+      titulo: String(body.titulo).trim().slice(0, 200),
+      descripcion: body.descripcion ? String(body.descripcion).slice(0, 2000) : null,
+      precio_usd: Number(body.precio_usd),
+      precio_cup: body.precio_cup ? Number(body.precio_cup) : null,
+      categoria: body.categoria ? String(body.categoria).slice(0, 80) : null,
+      provincia: body.provincia || seller.provincia,
+      municipio: body.municipio || seller.municipio,
+      imagenes: Array.isArray(body.imagenes) ? body.imagenes.slice(0, 8) : [],
+      estado_producto: body.estado_producto || 'nuevo',
+      stock: Number(body.stock) || 1,
+      activo: true,
+      publicado: true,
+    });
+    
+    return { ok: true, product: nuevo };
+  } catch(e) {
+    app.log.error('[SELLER-PRODUCT-CREATE] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+// GET: listar mis productos
+app.get('/api/seller/products', async (req, reply) => {
+  try {
+    const payload = requireSeller(req);
+    if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+    
+    const productos = await dbSelect('seller_products', '?seller_id=eq.' + encodeURIComponent(payload.sellerId) + '&order=created_at.desc');
+    
+    return { ok: true, total: productos.length, products: productos || [] };
+  } catch(e) {
+    app.log.error('[SELLER-PRODUCT-LIST] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+// PUT: editar mi producto
+app.put('/api/seller/products/:id', async (req, reply) => {
+  try {
+    const payload = requireSeller(req);
+    if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+    
+    const prod = await dbSelectOne('seller_products', '?id=eq.' + encodeURIComponent(req.params.id));
+    if (!prod) { reply.code(404); return { ok: false, error: 'Producto no encontrado' }; }
+    if (prod.seller_id !== payload.sellerId) {
+      reply.code(403); return { ok: false, error: 'No es tu producto' };
+    }
+    
+    const body = req.body || {};
+    const updates = {};
+    if (body.titulo) updates.titulo = String(body.titulo).trim().slice(0, 200);
+    if (body.descripcion !== undefined) updates.descripcion = body.descripcion ? String(body.descripcion).slice(0, 2000) : null;
+    if (body.precio_usd !== undefined) updates.precio_usd = Number(body.precio_usd);
+    if (body.precio_cup !== undefined) updates.precio_cup = body.precio_cup ? Number(body.precio_cup) : null;
+    if (body.categoria !== undefined) updates.categoria = body.categoria;
+    if (body.provincia !== undefined) updates.provincia = body.provincia;
+    if (body.municipio !== undefined) updates.municipio = body.municipio;
+    if (body.imagenes !== undefined && Array.isArray(body.imagenes)) updates.imagenes = body.imagenes.slice(0, 8);
+    if (body.estado_producto !== undefined) updates.estado_producto = body.estado_producto;
+    if (body.stock !== undefined) updates.stock = Number(body.stock) || 1;
+    if (body.activo !== undefined) updates.activo = !!body.activo;
+    if (body.publicado !== undefined) updates.publicado = !!body.publicado;
+    updates.updated_at = new Date().toISOString();
+    
+    const actualizado = await dbUpdate('seller_products', req.params.id, updates);
+    return { ok: true, product: actualizado };
+  } catch(e) {
+    app.log.error('[SELLER-PRODUCT-UPDATE] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+// DELETE: eliminar mi producto (soft delete)
+app.delete('/api/seller/products/:id', async (req, reply) => {
+  try {
+    const payload = requireSeller(req);
+    if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+    
+    const prod = await dbSelectOne('seller_products', '?id=eq.' + encodeURIComponent(req.params.id));
+    if (!prod) { reply.code(404); return { ok: false, error: 'Producto no encontrado' }; }
+    if (prod.seller_id !== payload.sellerId) {
+      reply.code(403); return { ok: false, error: 'No es tu producto' };
+    }
+    
+    await dbUpdate('seller_products', req.params.id, { activo: false, publicado: false });
+    return { ok: true };
+  } catch(e) {
+    app.log.error('[SELLER-PRODUCT-DELETE] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+// ═══ PÚBLICO: catálogo de vendedores para la Shop ═══
+app.get('/api/public/sellers/catalog', async (req) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query?.limit) || 100, 1), 500);
+    const offset = Math.max(Number(req.query?.offset) || 0, 0);
+    const productos = await dbSelect('public_products', '?limit=' + limit + '&offset=' + offset + '&order=created_at.desc');
+    
+    return {
+      ok: true,
+      total: (productos || []).length,
+      products: (productos || []).map(p => ({
+        id: p.id,
+        titulo: p.titulo,
+        descripcion: p.descripcion,
+        precio_usd: p.precio_usd,
+        precio_cup: p.precio_cup,
+        categoria: p.categoria,
+        provincia: p.provincia,
+        municipio: p.municipio,
+        imagenes: p.imagenes || [],
+        estado_producto: p.estado_producto,
+        stock: p.stock,
+        seller_nombre: p.seller_nombre,
+        seller_id: p.seller_id,
+        // NO incluimos seller_telefono — se obtiene solo al comprar
+        tipo: 'seller',
+      })),
+    };
+  } catch(e) {
+    app.log.error('[PUBLIC-SELLERS-CATALOG] ' + e.message);
+    return { ok: false, error: e.message, products: [] };
+  }
+});
+
+// ═══ CRÍTICO: número de WhatsApp correcto por producto ═══
+app.get('/api/product/whatsapp/:id', async (req, reply) => {
+  try {
+    const id = req.params.id;
+    
+    // 1) ¿Es producto de vendedor?
+    const sellerProd = await dbSelectOne('seller_products', '?id=eq.' + encodeURIComponent(id) + '&select=*,sellers!inner(telefono,estado,activo,plan_expira_at)');
+    if (sellerProd) {
+      const seller = sellerProd.sellers;
+      const puedeVender = seller && seller.estado === 'aprobado' && seller.activo === true
+        && (!seller.plan_expira_at || new Date(seller.plan_expira_at) > new Date());
+      
+      if (puedeVender) {
+        return {
+          ok: true,
+          telefono: seller.telefono,
+          nombre: seller.nombre || 'Vendedor',
+          esVendedor: true,
+        };
+      } else {
+        // Fallback al admin si el vendedor está suspendido
+        return {
+          ok: true,
+          telefono: state.shopConfig?.whatsapp || '5351425691',
+          nombre: 'Comdiaz Shop',
+          esVendedor: false,
+          fallback: true,
+        };
+      }
+    }
+    
+    // 2) ¿Es producto local de Comdiaz?
+    const local = (state.productosManuales || []).find(p => p.id === id);
+    if (local) {
+      return {
+        ok: true,
+        telefono: state.shopConfig?.whatsapp || '5351425691',
+        nombre: 'Comdiaz Shop',
+        esVendedor: false,
+      };
+    }
+    
+    // 3) ¿Es producto eBay/Temu?
+    const ebay = (state.results || []).find(p => p.id === id);
+    if (ebay) {
+      return {
+        ok: true,
+        telefono: state.shopConfig?.whatsapp || '5351425691',
+        nombre: 'Comdiaz Shop',
+        esVendedor: false,
+      };
+    }
+    
+    // 4) No encontrado — usar admin por defecto
+    return {
+      ok: true,
+      telefono: state.shopConfig?.whatsapp || '5351425691',
+      nombre: 'Comdiaz Shop',
+      esVendedor: false,
+      fallback: true,
+    };
+  } catch(e) {
+    app.log.error('[PRODUCT-WHATSAPP] ' + e.message);
+    return {
+      ok: true,
+      telefono: state.shopConfig?.whatsapp || '5351425691',
+      nombre: 'Comdiaz Shop',
+      esVendedor: false,
+      fallback: true,
+    };
+  }
+});
+
 app.get('/api/automation/status', async () => ({
   ok: true,
   running: state.automation?.running === true,

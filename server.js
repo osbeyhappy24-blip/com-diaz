@@ -17,6 +17,9 @@ import { ApifyClient } from 'apify-client';
 import { initApify, isApifyReady, searchSource, buildProductsForShop, SOURCES_CONFIG } from './import.js';
 import webpush from 'web-push';
 
+import { dbSelect, dbSelectOne, dbInsert, dbUpdate, dbCount, dbHealth } from './supabase.js';
+import { hashPassword, verifyPassword, createJWT, verifyJWT, getTokenFromRequest, requireSeller, requireAdmin, validarTelefono, normalizarTelefono } from './auth.js';
+
 // Cargar claves VAPID desde .vapid-keys.txt
 let VAPID_PUBLIC = process.env.VAPID_PUBLIC || '';
 let VAPID_PRIVATE = process.env.VAPID_PRIVATE || '';
@@ -2006,6 +2009,144 @@ app.post('/api/sre/config-telegram', async (req) => {
   if (enabled !== undefined) state.sre.telegramEnabled = !!enabled;
   await save();
   return { ok: true, telegramChatId: state.sre.telegramChatId, telegramEnabled: state.sre.telegramEnabled };
+});
+
+// ═══════════════════════════════════════════════════════
+// VENDEDORES — Registro, login, perfil
+// ═══════════════════════════════════════════════════════
+
+// POST: registro de vendedor
+app.post('/api/seller/register', async (req, reply) => {
+  try {
+    const { nombre, telefono, password, provincia, municipio, email } = req.body || {};
+    
+    if (!nombre || String(nombre).trim().length < 2) {
+      reply.code(400); return { ok: false, error: 'Nombre inválido' };
+    }
+    if (!telefono || !validarTelefono(telefono)) {
+      reply.code(400); return { ok: false, error: 'Teléfono inválido (formato: 5351234567)' };
+    }
+    if (!password || String(password).length < 6) {
+      reply.code(400); return { ok: false, error: 'Contraseña mínimo 6 caracteres' };
+    }
+    
+    const tel = normalizarTelefono(telefono);
+    
+    // Verificar si ya existe
+    const existente = await dbSelectOne('sellers', '?telefono=eq.' + encodeURIComponent(tel));
+    if (existente) {
+      reply.code(409); return { ok: false, error: 'Ya existe una cuenta con ese teléfono' };
+    }
+    
+    const password_hash = hashPassword(String(password));
+    
+    const nuevo = await dbInsert('sellers', {
+      nombre: String(nombre).trim().slice(0, 80),
+      telefono: tel,
+      password_hash,
+      email: email ? String(email).slice(0, 100) : null,
+      provincia: provincia ? String(provincia).slice(0, 60) : null,
+      municipio: municipio ? String(municipio).slice(0, 60) : null,
+      plan_id: 'basico',
+      estado: 'pendiente',
+      activo: true,
+      cuota_usada: 0,
+    });
+    
+    notifyTelegram(
+      '🏪 <b>NUEVO VENDEDOR</b>\n\n' +
+      '👤 ' + nombre + '\n' +
+      '📱 ' + tel + '\n' +
+      '📍 ' + (provincia || '?') + (municipio ? ' / ' + municipio : '') + '\n\n' +
+      '⏳ Pendiente de aprobación'
+    ).catch(() => {});
+    
+    return { ok: true, seller: { id: nuevo.id, nombre: nuevo.nombre, telefono: nuevo.telefono, estado: nuevo.estado } };
+  } catch(e) {
+    app.log.error('[SELLER-REGISTER] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+// POST: login de vendedor
+app.post('/api/seller/login', async (req, reply) => {
+  try {
+    const { telefono, password } = req.body || {};
+    if (!telefono || !password) {
+      reply.code(400); return { ok: false, error: 'Falta teléfono o contraseña' };
+    }
+    const tel = normalizarTelefono(telefono);
+    const seller = await dbSelectOne('sellers', '?telefono=eq.' + encodeURIComponent(tel));
+    if (!seller) {
+      reply.code(401); return { ok: false, error: 'Credenciales inválidas' };
+    }
+    if (!verifyPassword(String(password), seller.password_hash)) {
+      reply.code(401); return { ok: false, error: 'Credenciales inválidas' };
+    }
+    if (seller.estado === 'suspendido' || seller.activo === false) {
+      reply.code(403); return { ok: false, error: 'Cuenta suspendida' };
+    }
+    
+    const token = createJWT({ sellerId: seller.id, tipo: 'seller', telefono: seller.telefono });
+    
+    return {
+      ok: true,
+      token,
+      seller: {
+        id: seller.id,
+        nombre: seller.nombre,
+        telefono: seller.telefono,
+        estado: seller.estado,
+        plan_id: seller.plan_id,
+        provincia: seller.provincia,
+        municipio: seller.municipio,
+      }
+    };
+  } catch(e) {
+    app.log.error('[SELLER-LOGIN] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+// GET: perfil del vendedor (con plan y cuota)
+app.get('/api/seller/me', async (req, reply) => {
+  try {
+    const payload = requireSeller(req);
+    if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+    
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(payload.sellerId));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Cuenta no existe' }; }
+    
+    const plan = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(seller.plan_id));
+    const productosCount = await dbCount('seller_products', '?seller_id=eq.' + encodeURIComponent(seller.id) + '&activo=eq.true');
+    
+    return {
+      ok: true,
+      seller: {
+        id: seller.id,
+        nombre: seller.nombre,
+        telefono: seller.telefono,
+        email: seller.email,
+        provincia: seller.provincia,
+        municipio: seller.municipio,
+        estado: seller.estado,
+        activo: seller.activo,
+        plan_id: seller.plan_id,
+        plan: plan || null,
+        plan_expira_at: seller.plan_expira_at,
+        cuota_usada: productosCount,
+        cuota_max: plan ? plan.max_productos : 50,
+        cuota_disponible: plan ? Math.max(0, plan.max_productos - productosCount) : 0,
+        created_at: seller.created_at,
+      }
+    };
+  } catch(e) {
+    app.log.error('[SELLER-ME] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
 });
 
 app.get('/health', async () => ({ ok: true, service: 'comdiaz', ts: Date.now() }));

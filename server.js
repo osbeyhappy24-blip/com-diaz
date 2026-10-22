@@ -2347,6 +2347,102 @@ app.get('/api/public/sellers/catalog', async (req) => {
 });
 
 // ═══ CRÍTICO: número de WhatsApp correcto por producto ═══
+// ═══════════════════════════════════════════════════════
+// ADMIN — Aprobar vendedores, pagos, ver estadísticas
+// ═══════════════════════════════════════════════════════
+
+// GET: listar vendedores (filtrable por estado)
+app.get('/api/admin/sellers', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  
+  try {
+    const estado = req.query?.estado;
+    const q = estado ? '?estado=eq.' + encodeURIComponent(estado) + '&order=created_at.desc' : '?order=created_at.desc';
+    const sellers = await dbSelect('sellers', q);
+    // No devolver password_hash
+    const limpios = (sellers || []).map(s => {
+      const { password_hash, ...rest } = s;
+      return rest;
+    });
+    return { ok: true, total: limpios.length, sellers: limpios };
+  } catch(e) {
+    reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
+// POST: aprobar vendedor
+app.post('/api/admin/sellers/:id/approve', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  
+  try {
+    const seller = await dbUpdate('sellers', req.params.id, {
+      estado: 'aprobado',
+      activo: true,
+      updated_at: new Date().toISOString(),
+    });
+    if (!seller) { reply.code(404); return { ok: false, error: 'No encontrado' }; }
+    
+    notifyTelegram('✅ <b>VENDEDOR APROBADO</b>\n\n👤 ' + seller.nombre + '\n📱 ' + seller.telefono).catch(() => {});
+    
+    return { ok: true, seller: { id: seller.id, nombre: seller.nombre, estado: seller.estado } };
+  } catch(e) {
+    reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
+// POST: rechazar/suspender vendedor
+app.post('/api/admin/sellers/:id/suspend', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  
+  try {
+    const motivo = req.body?.motivo || 'Suspendido por admin';
+    const seller = await dbUpdate('sellers', req.params.id, {
+      estado: 'suspendido',
+      activo: false,
+      notas_internas: motivo,
+      updated_at: new Date().toISOString(),
+    });
+    if (!seller) { reply.code(404); return { ok: false, error: 'No encontrado' }; }
+    
+    notifyTelegram('🚫 <b>VENDEDOR SUSPENDIDO</b>\n\n👤 ' + seller.nombre + '\n📱 ' + seller.telefono + '\n📝 ' + motivo).catch(() => {});
+    
+    return { ok: true, seller: { id: seller.id, estado: seller.estado } };
+  } catch(e) {
+    reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
+// GET: estadísticas generales para admin
+app.get('/api/admin/stats', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  
+  try {
+    const pendientes = await dbCount('sellers', '?estado=eq.pendiente');
+    const aprobados = await dbCount('sellers', '?estado=eq.aprobado');
+    const suspendidos = await dbCount('sellers', '?estado=eq.suspendido');
+    const totalProductos = await dbCount('seller_products', '?activo=eq.true');
+    const pagosPendientes = await dbCount('payments', '?estado=eq.pendiente');
+    
+    return {
+      ok: true,
+      sellers: {
+        pendientes,
+        aprobados,
+        suspendidos,
+        total: pendientes + aprobados + suspendidos,
+      },
+      productos: { totalActivos: totalProductos },
+      pagos: { pendientes: pagosPendientes },
+    };
+  } catch(e) {
+    reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
 app.get('/api/product/whatsapp/:id', async (req, reply) => {
   try {
     const id = req.params.id;

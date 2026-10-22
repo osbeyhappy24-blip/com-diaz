@@ -1961,6 +1961,32 @@ app.get('/health', async () => ({ ok: true, service: 'comdiaz', ts: Date.now() }
 
 app.get('/api/state', async () => state);
 
+app.get('/api/home', async () => {
+  const results = state.results || [];
+  const manuales = state.productosManuales || [];
+  const activos = results.filter(r => r.activo !== false);
+  const conIA = activos.filter(r => r.aiTitulo).length;
+  const locales = manuales.filter(p => p.tipo === 'local');
+  
+  return {
+    ok: true,
+    running: state.automation?.running === true,
+    publishTimes: state.automation?.publishTimes || [],
+    lastRun: state.automation?.lastRun || null,
+    delaySeconds: state.automation?.delaySeconds || 5,
+    productos: activos.length,
+    conIA,
+    sinIA: activos.length - conIA,
+    categorias: (state.categories || []).length,
+    published: (state.published || []).length,
+    locales: locales.length,
+    localesPublicados: locales.filter(p => p.publicado).length,
+    margin: state.margin || 35,
+    capMax: CATALOG_CAP,
+    ts: Date.now(),
+  };
+});
+
 app.get('/api/automation/status', async () => ({
   ok: true,
   running: state.automation?.running === true,

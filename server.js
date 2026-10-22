@@ -665,12 +665,63 @@ async function cargarDesdeNube() {
       }
       if (remoto.visits) state.visits = remoto.visits;
       app.log.info("Config cargada desde JSONBin");
+      
+      // ═══ FUSIÓN AUTOMÁTICA DE LOCALES DESDE BACKUP ═══
+      try {
+        const backupLocales = await leerBackupLocales();
+        if (backupLocales && backupLocales.productos && backupLocales.productos.length > 0) {
+          const existentes = new Set((state.productosManuales || []).map(p => p.id));
+          let fusionados = 0;
+          for (const p of backupLocales.productos) {
+            if (!existentes.has(p.id)) {
+              state.productosManuales = state.productosManuales || [];
+              state.productosManuales.push(p);
+              fusionados++;
+            }
+          }
+          if (fusionados > 0) {
+            app.log.info('[FUSION-LOCALES] ' + fusionados + ' locales recuperados del backup');
+            await save();
+          }
+        }
+      } catch(e) {
+        app.log.warn('[FUSION-LOCALES] Error: ' + e.message);
+      }
+      
       return true;
     }
   } catch(e) {
     app.log.error("Error cargando JSONBin: " + e.message);
   }
   return false;
+}
+
+// Leer el backup de locales desde GitHub
+async function leerBackupLocales() {
+  try {
+    const GITHUB_API = 'https://api.github.com';
+    const FILE_PATH = 'locals-backup.json';
+    const token = process.env.GITHUB_STATE_TOKEN;
+    const repo = process.env.GITHUB_STATE_REPO;
+    if (!token || !repo) return null;
+    const url = GITHUB_API + '/repos/' + repo + '/contents/' + FILE_PATH;
+    const res = await fetch(url, {
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'comdiaz-backend',
+      },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const zlib = await import('zlib');
+    const gz = Buffer.from(data.content, 'base64');
+    const json = zlib.gunzipSync(gz).toString('utf8');
+    return JSON.parse(json);
+  } catch(e) {
+    return null;
+  }
 }
 
 async function guardarEnNube() {

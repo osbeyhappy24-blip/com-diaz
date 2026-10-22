@@ -1407,7 +1407,7 @@ function scheduleIA() {
 // ═══════════════════════════════════════════════════════
 
 // ═══ TOPE DE CATÁLOGO (evita crecimiento infinito) ═══
-const CATALOG_CAP = 10000;
+const CATALOG_CAP = 5000;
 // ═══ ACTUALIZACIÓN DE PRECIOS SIN AÑADIR PRODUCTOS ═══
 async function soloActualizarPrecios(sufijo, etiqueta) {
   const marginPct = Number(state.margin) || 35;
@@ -1485,7 +1485,7 @@ async function soloActualizarPrecios(sufijo, etiqueta) {
 }
 
    // Tope duro de productos activos
-const CATALOG_WARN = 9500;   // Alerta al 95%
+const CATALOG_WARN = 4500;   // Alerta al 95%
 
 async function _cronSearch(limitePorCat, sufijo, etiqueta, prioridadDefault) {
   // ═══ VERIFICAR TOPE DE CATÁLOGO ═══
@@ -5198,15 +5198,39 @@ const PORT = process.env.PORT || 3000;
 async function autoSearchOnStart() {
   try {
     const actual = (state.results || []).length;
-    if (actual < 500 && (state.published || []).length < 500) {
-      app.log.info('Solo ' + actual + ' productos en memoria. Regenerando catalogo...');
-      await runSearch('auto-start');
-      app.log.info('Auto-busqueda completada: ' + state.results.length + ' productos');
-    } else {
-      app.log.info('Ya hay ' + actual + ' productos, no se regenera al arrancar');
+    
+    // Si ya hay productos suficientes, no hacer nada
+    if (actual >= 500) {
+      app.log.info('[AUTO-START] Ya hay ' + actual + ' productos, no se regenera');
+      return;
     }
+    
+    // PROTECCIÓN: si hay pocos productos, verificar GitHub antes de buscar
+    app.log.warn('[AUTO-START] Solo ' + actual + ' productos. Verificando GitHub...');
+    
+    try {
+      const remoto = await leerEstado();
+      if (remoto && remoto.results && remoto.results.length > 500) {
+        app.log.info('[AUTO-START] GitHub tiene ' + remoto.results.length + ' productos. Cargando.');
+        state.results = mergeProducts(state.results || [], remoto.results);
+        if (remoto.published) state.published = remoto.published;
+        if (remoto.productosManuales) state.productosManuales = remoto.productosManuales;
+        if (remoto.categories) state.categories = remoto.categories;
+        if (remoto.shopConfig) state.shopConfig = { ...state.shopConfig, ...remoto.shopConfig };
+        await save();
+        app.log.info('[AUTO-START] Restaurados ' + state.results.length + ' productos desde GitHub');
+        return;
+      }
+    } catch(e) {
+      app.log.warn('[AUTO-START] No se pudo leer GitHub: ' + e.message);
+    }
+    
+    // Solo si GitHub también está vacío, hacer búsqueda inicial
+    app.log.info('[AUTO-START] GitHub vacío. Ejecutando búsqueda inicial.');
+    await runSearch('auto-start');
+    app.log.info('[AUTO-START] Búsqueda completada: ' + state.results.length + ' productos');
   } catch (e) {
-    app.log.error('Error en auto-busqueda: ' + e.message);
+    app.log.error('[AUTO-START] Error: ' + e.message);
   }
 }
 
@@ -5221,6 +5245,6 @@ cargarDesdeNube().then(() => {
   schedule();
   scheduleIA();
   scheduleDaily();
-  setTimeout(autoSearchOnStart, 5000);
+  setTimeout(autoSearchOnStart, 15000);  // 15s para dar margen a cargarDesdeNube
 });
 });

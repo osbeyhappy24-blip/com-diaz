@@ -1961,6 +1961,14 @@ app.get('/health', async () => ({ ok: true, service: 'comdiaz', ts: Date.now() }
 
 app.get('/api/state', async () => state);
 
+app.get('/api/automation/status', async () => ({
+  ok: true,
+  running: state.automation?.running === true,
+  publishTimes: state.automation?.publishTimes || [],
+  lastRun: state.automation?.lastRun || null,
+  delaySeconds: state.automation?.delaySeconds || 5,
+}));
+
 app.post('/api/automation/play', async () => {
   const delay = state.automation.delaySeconds;
   state.automation.running = true;
@@ -1972,7 +1980,7 @@ app.post('/api/automation/play', async () => {
 
 app.post('/api/automation/pause', async () => {
   state.automation.running = false;
-  save();
+  await save();
   app.log.info('Comdiaz · automatización pausada');
   logActivity('pause', {});
   return { ok: true };

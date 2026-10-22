@@ -99,6 +99,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (!req.url.startsWith('/api/')) return;
   if (req.method === 'OPTIONS') return;
   if (req.url.startsWith('/api/auth')) return;
+  if (req.url.startsWith('/api/seller/')) return;  // vendedores usan JWT propio
   if (req.url.startsWith('/api/track-visit')) return;
   if (req.url.startsWith('/api/track-order')) return;
   if (req.url.startsWith('/api/public/')) return;

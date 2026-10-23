@@ -2321,19 +2321,39 @@ app.delete('/api/seller/products/:id', async (req, reply) => {
 
 // ═══ PÚBLICO: lista de planes disponibles ═══
 app.get('/api/public/plans', async (req) => {
+  const PLANES_META = {
+    basico: {
+      orden: 1, destacado: false,
+      features: ['50 productos/mes', '1 foto por producto', 'Soporte por WhatsApp']
+    },
+    pro: {
+      orden: 2, destacado: true,
+      features: ['200 productos/mes', '3 fotos por producto', '3 destacados/mes', 'Soporte prioritario']
+    },
+    premium: {
+      orden: 3, destacado: false,
+      features: ['Productos ilimitados', '5 fotos por producto', 'Destacados ilimitados', 'Descripcion con IA', 'Soporte VIP']
+    }
+  };
+
   try {
-    const planes = await dbSelect('plans', '?order=orden.asc');
-    if (!planes || planes.length === 0) {
+    const planesDB = await dbSelect('plans', '?order=precio_usd.asc');
+    if (!planesDB || planesDB.length === 0) {
       return {
         ok: true,
         plans: [{
-          id: 'basico', nombre: 'Básico', precio_usd: 0, max_productos: 50,
-          descripcion: 'Perfecto para empezar', destacado: false,
-          features: ['50 productos/mes', '1 foto por producto', 'Soporte por WhatsApp']
+          id: 'basico', nombre: 'Basico', precio_usd: 0, max_productos: 50,
+          descripcion: 'Perfecto para empezar', orden: 1, destacado: false,
+          features: PLANES_META.basico.features
         }]
       };
     }
-    return { ok: true, plans: planes };
+    const enriquecidos = planesDB.map(p => {
+      const meta = PLANES_META[p.id] || { orden: 99, destacado: false, features: [] };
+      return Object.assign({}, p, meta);
+    });
+    enriquecidos.sort((a,b) => a.orden - b.orden);
+    return { ok: true, plans: enriquecidos };
   } catch(e) {
     app.log.error('[PUBLIC-PLANS] ' + e.message);
     return { ok: false, error: e.message, plans: [] };
@@ -2386,14 +2406,11 @@ app.post('/api/admin/plans/seed', async (req, reply) => {
   if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
   const planesDef = [
     { id: 'basico', nombre: 'Básico', precio_usd: 0, max_productos: 50,
-      descripcion: 'Perfecto para empezar', orden: 1, destacado: false, activo: true,
-      features: ['50 productos/mes', '1 foto por producto', 'Soporte por WhatsApp'] },
+      descripcion: 'Perfecto para empezar' },
     { id: 'pro', nombre: 'Pro', precio_usd: 5, max_productos: 200,
-      descripcion: 'Para vendedores activos', orden: 2, destacado: true, activo: true,
-      features: ['200 productos/mes', '3 fotos por producto', '3 destacados/mes', 'Soporte prioritario'] },
+      descripcion: 'Para vendedores activos - 3 fotos y destacados' },
     { id: 'premium', nombre: 'Premium', precio_usd: 15, max_productos: -1,
-      descripcion: 'Sin límites + IA', orden: 3, destacado: false, activo: true,
-      features: ['Productos ilimitados', '5 fotos por producto', 'Destacados ilimitados', 'Descripción con IA', 'Soporte VIP'] }
+      descripcion: 'Sin limites + IA + destacados ilimitados + VIP' }
   ];
   const resultados = [];
   for (const plan of planesDef) {

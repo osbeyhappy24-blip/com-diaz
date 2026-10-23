@@ -2534,6 +2534,110 @@ app.get('/api/admin/sellers', async (req, reply) => {
 });
 
 
+
+// ═══ HELPER: crear notificación in-app (guardada en state.notifications) ═══
+// Storage: state.notifications = [{ id, user_type, user_id, tipo, titulo, mensaje, accion_url, leida, created_at }]
+// Cap 500 global (LRU), 50 por seller visible
+function crearNotificacion({ user_type, user_id, tipo, titulo, mensaje, accion_url }) {
+  try {
+    if (!state.notifications) state.notifications = [];
+    const notif = {
+      id: 'n_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+      user_type: user_type || 'seller',
+      user_id: user_id || null,
+      tipo: tipo || 'info',
+      titulo: String(titulo || '').slice(0, 100),
+      mensaje: mensaje ? String(mensaje).slice(0, 1000) : null,
+      accion_url: accion_url || null,
+      leida: false,
+      created_at: new Date().toISOString()
+    };
+    state.notifications.push(notif);
+
+    // Cap global 500 (LRU: borrar las más viejas)
+    if (state.notifications.length > 500) {
+      state.notifications = state.notifications.slice(-500);
+    }
+
+    // Guardar async (no bloquea)
+    save().catch(function(e){ app.log.error('[NOTIF-SAVE] ' + e.message); });
+    app.log.info('[NOTIF] ' + tipo + ' para ' + user_type + ' ' + (user_id || '-'));
+    return notif;
+  } catch(e) {
+    app.log.error('[NOTIF-CREATE] ' + e.message);
+    return null;
+  }
+}
+
+// ═══ Endpoints de notificaciones (seller) ═══
+app.get('/api/seller/notifications', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const all = (state.notifications || []).filter(function(n) {
+      return n.user_type === 'seller' && n.user_id === payload.sellerId;
+    });
+    // Ordenar por fecha descendente, cap 50
+    const sorted = all.slice().sort(function(a, b) {
+      return new Date(b.created_at) - new Date(a.created_at);
+    }).slice(0, 50);
+    return { ok: true, notifications: sorted };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+app.get('/api/seller/notifications/count', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const count = (state.notifications || []).filter(function(n) {
+      return n.user_type === 'seller' && n.user_id === payload.sellerId && !n.leida;
+    }).length;
+    return { ok: true, count };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+app.post('/api/seller/notifications/:id/read', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const notif = (state.notifications || []).find(function(n) {
+      return n.id === req.params.id && n.user_id === payload.sellerId;
+    });
+    if (!notif) { reply.code(404); return { ok: false, error: 'No encontrada' }; }
+    notif.leida = true;
+    save().catch(function(){});
+    return { ok: true };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+app.post('/api/seller/notifications/read-all', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    let n = 0;
+    (state.notifications || []).forEach(function(notif) {
+      if (notif.user_type === 'seller' && notif.user_id === payload.sellerId && !notif.leida) {
+        notif.leida = true;
+        n++;
+      }
+    });
+    if (n > 0) save().catch(function(){});
+    return { ok: true, actualizadas: n };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 // ═══ ADMIN: ver productos de un seller específico ═══
 app.get('/api/admin/sellers/:id/products', async (req, reply) => {
   const auth = requireAdmin(req);
@@ -2563,6 +2667,14 @@ app.post('/api/admin/sellers/:id/approve', async (req, reply) => {
     if (!seller) { reply.code(404); return { ok: false, error: 'No encontrado' }; }
     
     notifyTelegram('✅ <b>VENDEDOR APROBADO</b>\n\n👤 ' + seller.nombre + '\n📱 ' + seller.telefono).catch(() => {});
+    crearNotificacion({
+      user_type: 'seller',
+      user_id: seller.id,
+      tipo: 'aprobado',
+      titulo: '¡Tu cuenta fue aprobada!',
+      mensaje: 'Ya puedes publicar productos en Comdiaz Shop. Entra a tu panel para empezar.',
+      accion_url: 'seller-panel.html'
+    });
     
     return { ok: true, seller: { id: seller.id, nombre: seller.nombre, estado: seller.estado } };
   } catch(e) {
@@ -2586,6 +2698,14 @@ app.post('/api/admin/sellers/:id/suspend', async (req, reply) => {
     if (!seller) { reply.code(404); return { ok: false, error: 'No encontrado' }; }
     
     notifyTelegram('🚫 <b>VENDEDOR SUSPENDIDO</b>\n\n👤 ' + seller.nombre + '\n📱 ' + seller.telefono + '\n📝 ' + motivo).catch(() => {});
+    crearNotificacion({
+      user_type: 'seller',
+      user_id: seller.id,
+      tipo: 'suspendido',
+      titulo: 'Tu cuenta fue suspendida',
+      mensaje: 'Motivo: ' + (motivo || 'No especificado') + '. Contacta al admin para más información.',
+      accion_url: 'seller-panel.html'
+    });
     
     return { ok: true, seller: { id: seller.id, estado: seller.estado } };
   } catch(e) {

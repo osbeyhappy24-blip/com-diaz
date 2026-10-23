@@ -4125,7 +4125,11 @@ app.post('/api/upload-image', async (req, reply) => {
     entry.count++;
     rateLimitMap.set(key, entry);
 
-    if (entry.count > 5) {
+    let limit = 5;
+    try { const sp = requireSeller(req); if (sp && sp.sellerId) limit = 30; } catch(_) {}
+    try { const ap = requireAdmin(req); if (ap) limit = 60; } catch(_) {}
+
+    if (entry.count > limit) {
       reply.code(429);
       return { ok: false, error: 'Demasiadas subidas. Espera 1 minuto.' };
     }

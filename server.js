@@ -2025,7 +2025,7 @@ app.post('/api/sre/config-telegram', async (req) => {
 // POST: registro de vendedor
 app.post('/api/seller/register', async (req, reply) => {
   try {
-    const { nombre, telefono, password, provincia, municipio, email } = req.body || {};
+    const { nombre, telefono, password, provincia, municipio, email, plan_id } = req.body || {};
     
     if (!nombre || String(nombre).trim().length < 2) {
       reply.code(400); return { ok: false, error: 'Nombre inválido' };
@@ -2046,6 +2046,15 @@ app.post('/api/seller/register', async (req, reply) => {
     }
     
     const password_hash = hashPassword(String(password));
+
+    // Validar plan_id (solo permitir planes existentes, default basico)
+    let planElegido = 'basico';
+    if (plan_id) {
+      try {
+        const pChk = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(plan_id));
+        if (pChk) planElegido = plan_id;
+      } catch(_) {}
+    }
     
     const nuevo = await dbInsert('sellers', {
       nombre: String(nombre).trim().slice(0, 80),
@@ -2054,7 +2063,7 @@ app.post('/api/seller/register', async (req, reply) => {
       email: email ? String(email).slice(0, 100) : null,
       provincia: provincia ? String(provincia).slice(0, 60) : null,
       municipio: municipio ? String(municipio).slice(0, 60) : null,
-      plan_id: 'basico',
+      plan_id: planElegido,
       estado: 'pendiente',
       activo: true,
       cuota_usada: 0,

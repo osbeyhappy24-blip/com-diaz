@@ -100,6 +100,11 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.method === 'OPTIONS') return;
   if (req.url.startsWith('/api/auth')) return;
   if (req.url.startsWith('/api/seller/')) return;  // vendedores usan JWT propio
+  // /api/upload-image: aceptar admin (X-Comdiaz-Key) O seller (Bearer JWT válido)
+  if (req.url.startsWith('/api/upload-image')) {
+    try { const sp = requireSeller(req); if (sp && sp.sellerId) return; } catch(_) {}
+    // Si no es seller, cae al gate normal (X-Comdiaz-Key admin)
+  }
   if (req.url.startsWith('/api/product/whatsapp/')) return;  // público: compradores
   if (req.url.startsWith('/api/track-visit')) return;
   if (req.url.startsWith('/api/track-order')) return;

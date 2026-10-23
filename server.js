@@ -5712,7 +5712,6 @@ app.get('/api/public/local', async (req) => {
   }
   if (q.destacados === '1') lista = lista.filter(p => p.destacado);
 
-  // Proyección pública: SIN priceBase, SIN margenPct, SIN notas, SIN whatsapp
   const proyeccion = lista.map(p => ({
     id: p.id,
     title: p.title,
@@ -5728,12 +5727,59 @@ app.get('/api/public/local', async (req) => {
     cantidad: p.cantidad || 1,
     destacado: !!p.destacado,
     createdAt: p.createdAt,
+    tipo: 'local',
   }));
+
+  // ── Productos de vendedores aprobados ──
+  let sellerProds = [];
+  try {
+    const raw = await dbSelect(
+      'seller_products',
+      '?publicado=eq.true&activo=eq.true&select=*,sellers!inner(estado,activo,nombre,provincia,municipio)'
+    );
+    sellerProds = (raw || [])
+      .filter(p => p.sellers && p.sellers.estado === 'aprobado' && p.sellers.activo !== false)
+      .filter(p => p.imagenes && Array.isArray(p.imagenes) && p.imagenes.length > 0)
+      .map(p => ({
+        id: 'seller_' + p.id,
+        title: p.titulo,
+        image: p.imagenes[0],
+        images: p.imagenes,
+        category: p.categoria || 'Sin categoría',
+        description: p.descripcion || '',
+        salePrice: p.precio_usd,
+        precioCUP: p.precio_cup || null,
+        provincia: p.provincia,
+        municipio: p.municipio,
+        estado: p.estado_producto || 'nuevo',
+        cantidad: p.stock || 1,
+        destacado: false,
+        createdAt: p.created_at,
+        tipo: 'seller',
+        seller_nombre: p.sellers.nombre,
+        seller_id: p.seller_id,
+      }));
+  } catch(e) {
+    app.log.error('[PUBLIC-LOCAL-SELLERS] ' + e.message);
+  }
+
+  // Filtros a sellers
+  let sellerFiltrado = sellerProds;
+  if (q.provincia) sellerFiltrado = sellerFiltrado.filter(p => p.provincia === q.provincia);
+  if (q.municipio) sellerFiltrado = sellerFiltrado.filter(p => p.municipio === q.municipio);
+  if (q.categoria) sellerFiltrado = sellerFiltrado.filter(p => (p.category || '') === q.categoria);
+  if (q.estado) sellerFiltrado = sellerFiltrado.filter(p => p.estado === q.estado);
+  if (q.buscar) {
+    const term = String(q.buscar).toLowerCase();
+    sellerFiltrado = sellerFiltrado.filter(p => (p.title || '').toLowerCase().includes(term));
+  }
+
+  const todos = proyeccion.concat(sellerFiltrado);
 
   return {
     ok: true,
-    total: proyeccion.length,
-    productos: proyeccion,
+    total: todos.length,
+    productos: todos,
   };
 });
 

@@ -154,7 +154,7 @@ app.addHook('onRequest', async (req, reply) => {
   const allowOrigin = origin && origin !== '' ? origin : "https://com-diaz-web.onrender.com";
   reply.header("Access-Control-Allow-Origin", allowOrigin);
   reply.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  reply.header('Access-Control-Allow-Headers', 'Content-Type, X-Comdiaz-Key');
+  reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Comdiaz-Key');
   reply.header('Access-Control-Max-Age', '86400');
 
   // ─── Headers de seguridad ───

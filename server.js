@@ -1234,7 +1234,7 @@ async function procesarDescripcionesLocales(max = 100) {
             ref.aiDescripcion = String(desc).trim().slice(0, 500);
             ref.aiDescripcionUpdated = new Date().toISOString();
             aiResetIfNewDay();
-            aiUsageCounters.descripcion++;
+            aiUsageCounters.descripcion++; aiScheduleSave();
             procesados++;
           }
         }
@@ -1315,7 +1315,7 @@ async function procesarProductosSinIA(max = 100) {
         const ref = enResults || enManuales;
         if (ref) {
           aiResetIfNewDay();
-          aiUsageCounters.productos++;
+          aiUsageCounters.productos++; aiScheduleSave();
           ref.aiTitulo = String(out.titulo || '').slice(0, 120);
           ref.aiDescripcion = String(out.descripcion || '').slice(0, 600);
           ref.aiUpdatedAt = new Date().toISOString();
@@ -3420,7 +3420,7 @@ app.post('/api/ai/copilot-stream', async (req, reply) => {
   }
 
   aiResetIfNewDay();
-  aiUsageCounters.copiloto++;
+  aiUsageCounters.copiloto++; aiScheduleSave();
 
   const { contexto, historialTexto } = await buildCopilotContext(historial);
   const prompt = buildCopilotPrompt(contexto, historialTexto, mensaje);
@@ -3626,7 +3626,7 @@ ${String(mensaje).slice(0, 1000)}
 RESPUESTA:`;
 
     aiResetIfNewDay();
-    aiUsageCounters.copiloto++;
+    aiUsageCounters.copiloto++; aiScheduleSave();
     const respuesta = await preguntarIA(prompt, { json: false });
 
     // ─── Parsear acciones sugeridas (si hay) ───
@@ -3664,6 +3664,15 @@ const aiUsageCounters = (state.aiUsageCounters && typeof state.aiUsageCounters =
   ? state.aiUsageCounters
   : { fecha: new Date().toISOString().slice(0, 10), productos: 0, fotos: 0, copiloto: 0, banners: 0, descripcion: 0, otros: 0 };
 state.aiUsageCounters = aiUsageCounters;
+
+let _aiSaveTimer = null;
+function aiScheduleSave() {
+  // Debounce: guarda 5s después del último incremento (evita spam de escrituras)
+  if (_aiSaveTimer) clearTimeout(_aiSaveTimer);
+  _aiSaveTimer = setTimeout(function() {
+    try { save(); } catch(e) { /* silent */ }
+  }, 5000);
+}
 
 function aiResetIfNewDay() {
   const hoy = new Date().toISOString().slice(0, 10);
@@ -3797,7 +3806,7 @@ IMPORTANTE:
     sugerencia.confianza = Number(sugerencia.confianza) || 0.5;
 
     aiResetIfNewDay();
-    aiUsageCounters.fotos++;
+    aiUsageCounters.fotos++; aiScheduleSave();
     const durMs = Date.now() - startMs;
     logActivity('ai_analyze_photo', {
       titulo: String(sugerencia.titulo).slice(0, 60),

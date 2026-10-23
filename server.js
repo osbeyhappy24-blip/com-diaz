@@ -2397,6 +2397,13 @@ app.post('/api/public/seller-contact', async (req, reply) => {
 
     // productId puede venir como 'seller_<uuid>' — limpiar prefijo
     const cleanId = String(productId).replace(/^seller_/, '');
+
+    // Validar formato UUID antes de consultar (evita error de Supabase)
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(cleanId)) {
+      reply.code(404); return { ok: false, error: 'Producto no encontrado' };
+    }
+
     const prod = await dbSelectOne(
       'seller_products',
       '?id=eq.' + encodeURIComponent(cleanId) + '&select=*,sellers!inner(telefono,estado,activo,nombre)'

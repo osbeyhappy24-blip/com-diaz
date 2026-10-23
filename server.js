@@ -298,7 +298,8 @@ const DEFAULTS = {
   },
   loginAttempts: {}, // IP -> { count, blockedUntil }
   activityLog: [], // ultimos eventos
-  subscriptions: [], // Web Push: suscripciones vinculadas a pedidos
+  subscriptions: [],
+  sellerSubscriptions: [],  // Push subs de vendedores // Web Push: suscripciones vinculadas a pedidos
   tesoreria: {
     movimientos: []  // lista de ingresos/egresos
   },
@@ -2562,12 +2563,101 @@ function crearNotificacion({ user_type, user_id, tipo, titulo, mensaje, accion_u
     // Guardar async (no bloquea)
     save().catch(function(e){ app.log.error('[NOTIF-SAVE] ' + e.message); });
     app.log.info('[NOTIF] ' + tipo + ' para ' + user_type + ' ' + (user_id || '-'));
+
+    // Enviar push al dispositivo del seller si tiene suscripción activa
+    if (user_type === 'seller' && user_id) {
+      enviarPushSeller(user_id, notif).catch(function(e){ app.log.error('[NOTIF-PUSH] ' + e.message); });
+    }
+
     return notif;
   } catch(e) {
     app.log.error('[NOTIF-CREATE] ' + e.message);
     return null;
   }
 }
+
+// ═══ Push: enviar notificación al dispositivo del seller ═══
+async function enviarPushSeller(sellerId, notif) {
+  const subs = (state.sellerSubscriptions || []).filter(function(s) {
+    return s.sellerId === sellerId;
+  });
+  if (!subs.length) return;
+
+  const payload = JSON.stringify({
+    title: notif.titulo,
+    body: notif.mensaje || '',
+    tipo: notif.tipo || 'info',
+    url: notif.accion_url ? '/' + notif.accion_url + '#notif' : '/seller-panel.html#notif',
+    id: notif.id,
+    icon: '/icon-shop-192.png',
+    badge: '/icon-shop-192.png',
+    vibrate: [200, 100, 200]
+  });
+
+  const paraBorrar = [];
+  for (const sub of subs) {
+    try {
+      await webpush.sendNotification(sub.subscription, payload, { TTL: 86400, urgency: 'high' });
+    } catch(e) {
+      if (e.statusCode === 410 || e.statusCode === 404) {
+        paraBorrar.push(sub.subscription.endpoint);
+      }
+    }
+  }
+  if (paraBorrar.length) {
+    state.sellerSubscriptions = (state.sellerSubscriptions || []).filter(function(s) {
+      return !paraBorrar.includes(s.subscription.endpoint);
+    });
+    save().catch(function(){});
+  }
+}
+
+// ═══ Endpoints de suscripción push para sellers ═══
+app.post('/api/seller/push/subscribe', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const subscription = req.body && req.body.subscription;
+    if (!subscription || !subscription.endpoint) {
+      reply.code(400); return { ok: false, error: 'Falta subscription.endpoint' };
+    }
+    state.sellerSubscriptions = state.sellerSubscriptions || [];
+    state.sellerSubscriptions = state.sellerSubscriptions.filter(function(s) {
+      return !(s.sellerId === payload.sellerId && s.subscription.endpoint === subscription.endpoint);
+    });
+    state.sellerSubscriptions.push({
+      sellerId: payload.sellerId,
+      subscription,
+      created_at: new Date().toISOString()
+    });
+    if (state.sellerSubscriptions.length > 500) {
+      state.sellerSubscriptions = state.sellerSubscriptions.slice(-500);
+    }
+    await save();
+    return { ok: true, total: state.sellerSubscriptions.length };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+app.post('/api/seller/push/unsubscribe', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const endpoint = req.body && req.body.endpoint;
+    if (!endpoint) { reply.code(400); return { ok: false, error: 'Falta endpoint' }; }
+    state.sellerSubscriptions = (state.sellerSubscriptions || []).filter(function(s) {
+      return !(s.sellerId === payload.sellerId && s.subscription.endpoint === endpoint);
+    });
+    await save();
+    return { ok: true };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 
 // ═══ Endpoints de notificaciones (seller) ═══
 app.get('/api/seller/notifications', async (req, reply) => {

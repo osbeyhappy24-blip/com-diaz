@@ -2369,6 +2369,64 @@ app.get('/api/public/plans', async (req) => {
   }
 });
 
+
+// ═══ PÚBLICO: obtener contacto del vendedor de un producto ═══
+// Se llama solo al tocar "Pedir por WhatsApp" — no expone teléfonos en el catálogo
+app.post('/api/public/seller-contact', async (req, reply) => {
+  try {
+    const { productId } = req.body || {};
+    if (!productId) {
+      reply.code(400); return { ok: false, error: 'productId requerido' };
+    }
+
+    // Rate limit 10/min por IP (anti-scraping)
+    const ip = req.headers['cf-connecting-ip'] ||
+               req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+               req.ip || 'desconocida';
+    const key = 'contact:' + ip;
+    const ahora = Date.now();
+    const entry = rateLimitMap.get(key) || { count: 0, resetAt: ahora + 60000 };
+    if (ahora > entry.resetAt) {
+      entry.count = 0; entry.resetAt = ahora + 60000;
+    }
+    entry.count++;
+    rateLimitMap.set(key, entry);
+    if (entry.count > 10) {
+      reply.code(429); return { ok: false, error: 'Demasiados intentos. Espera 1 minuto.' };
+    }
+
+    // productId puede venir como 'seller_<uuid>' — limpiar prefijo
+    const cleanId = String(productId).replace(/^seller_/, '');
+    const prod = await dbSelectOne(
+      'seller_products',
+      '?id=eq.' + encodeURIComponent(cleanId) + '&select=*,sellers!inner(telefono,estado,activo,nombre)'
+    );
+
+    if (!prod || !prod.sellers) {
+      reply.code(404); return { ok: false, error: 'Producto no encontrado' };
+    }
+    if (prod.sellers.estado !== 'aprobado' || prod.sellers.activo === false) {
+      reply.code(403); return { ok: false, error: 'Vendedor no disponible' };
+    }
+    if (prod.activo === false || prod.publicado === false) {
+      reply.code(403); return { ok: false, error: 'Producto no disponible' };
+    }
+
+    return {
+      ok: true,
+      telefono: prod.sellers.telefono,
+      nombre: prod.sellers.nombre,
+      titulo: prod.titulo,
+      precio_usd: prod.precio_usd,
+      precio_cup: prod.precio_cup
+    };
+  } catch(e) {
+    app.log.error('[SELLER-CONTACT] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 // ═══ PÚBLICO: catálogo de vendedores para la Shop ═══
 app.get('/api/public/sellers/catalog', async (req) => {
   try {
@@ -4197,23 +4255,36 @@ app.post('/api/upload-image', async (req, reply) => {
       return { ok: false, error: 'Falta la imagen' };
     }
 
-    // Límite: 5 subidas/min por IP
-    const ip = req.headers['cf-connecting-ip'] ||
-               req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-               req.ip || 'desconocida';
-    const key = ip + ':upload';
+    // Identificar quien sube (seller o admin)
+    let sellerId = null;
+    let esAdmin = false;
+    try { const sp = requireSeller(req); if (sp && sp.sellerId) sellerId = sp.sellerId; } catch(_) {}
+    try { const ap = requireAdmin(req); if (ap) esAdmin = true; } catch(_) {}
+
+    // Rate limit: por sellerId si autenticado, por IP si anonimo
+    let rateKey, limit;
+    if (sellerId) {
+      rateKey = 'seller:' + sellerId + ':upload';
+      limit = 30;
+    } else if (esAdmin) {
+      rateKey = 'admin:upload';
+      limit = 60;
+    } else {
+      const ip = req.headers['cf-connecting-ip'] ||
+                 req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+                 req.ip || 'desconocida';
+      rateKey = 'ip:' + ip + ':upload';
+      limit = 5;
+    }
+
     const ahora = Date.now();
-    const entry = rateLimitMap.get(key) || { count: 0, resetAt: ahora + 60000 };
+    const entry = rateLimitMap.get(rateKey) || { count: 0, resetAt: ahora + 60000 };
     if (ahora > entry.resetAt) {
       entry.count = 0;
       entry.resetAt = ahora + 60000;
     }
     entry.count++;
-    rateLimitMap.set(key, entry);
-
-    let limit = 5;
-    try { const sp = requireSeller(req); if (sp && sp.sellerId) limit = 30; } catch(_) {}
-    try { const ap = requireAdmin(req); if (ap) limit = 60; } catch(_) {}
+    rateLimitMap.set(rateKey, entry);
 
     if (entry.count > limit) {
       reply.code(429);
@@ -4221,7 +4292,7 @@ app.post('/api/upload-image', async (req, reply) => {
     }
 
     const resultado = await subirImagen(image, nombre);
-    logActivity('upload_image', { url: resultado.url.slice(0, 60) });
+    logActivity('upload_image', { url: resultado.url.slice(0, 60), sellerId });
     return { ok: true, ...resultado };
   } catch (e) {
     app.log.error('Error subiendo imagen: ' + e.message);

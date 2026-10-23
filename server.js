@@ -2318,6 +2318,28 @@ app.delete('/api/seller/products/:id', async (req, reply) => {
   }
 });
 
+
+// ═══ PÚBLICO: lista de planes disponibles ═══
+app.get('/api/public/plans', async (req) => {
+  try {
+    const planes = await dbSelect('plans', '?order=orden.asc');
+    if (!planes || planes.length === 0) {
+      return {
+        ok: true,
+        plans: [{
+          id: 'basico', nombre: 'Básico', precio_usd: 0, max_productos: 50,
+          descripcion: 'Perfecto para empezar', destacado: false,
+          features: ['50 productos/mes', '1 foto por producto', 'Soporte por WhatsApp']
+        }]
+      };
+    }
+    return { ok: true, plans: planes };
+  } catch(e) {
+    app.log.error('[PUBLIC-PLANS] ' + e.message);
+    return { ok: false, error: e.message, plans: [] };
+  }
+});
+
 // ═══ PÚBLICO: catálogo de vendedores para la Shop ═══
 app.get('/api/public/sellers/catalog', async (req) => {
   try {
@@ -2358,6 +2380,39 @@ app.get('/api/public/sellers/catalog', async (req) => {
 // ═══════════════════════════════════════════════════════
 
 // GET: listar vendedores (filtrable por estado)
+
+app.post('/api/admin/plans/seed', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  const planesDef = [
+    { id: 'basico', nombre: 'Básico', precio_usd: 0, max_productos: 50,
+      descripcion: 'Perfecto para empezar', orden: 1, destacado: false, activo: true,
+      features: ['50 productos/mes', '1 foto por producto', 'Soporte por WhatsApp'] },
+    { id: 'pro', nombre: 'Pro', precio_usd: 5, max_productos: 200,
+      descripcion: 'Para vendedores activos', orden: 2, destacado: true, activo: true,
+      features: ['200 productos/mes', '3 fotos por producto', '3 destacados/mes', 'Soporte prioritario'] },
+    { id: 'premium', nombre: 'Premium', precio_usd: 15, max_productos: -1,
+      descripcion: 'Sin límites + IA', orden: 3, destacado: false, activo: true,
+      features: ['Productos ilimitados', '5 fotos por producto', 'Destacados ilimitados', 'Descripción con IA', 'Soporte VIP'] }
+  ];
+  const resultados = [];
+  for (const plan of planesDef) {
+    try {
+      const existente = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(plan.id));
+      if (existente) {
+        await dbUpdate('plans', plan.id, plan);
+        resultados.push({ id: plan.id, accion: 'actualizado' });
+      } else {
+        await dbInsert('plans', plan);
+        resultados.push({ id: plan.id, accion: 'creado' });
+      }
+    } catch(e) {
+      resultados.push({ id: plan.id, error: e.message });
+    }
+  }
+  return { ok: true, resultados };
+});
+
 app.get('/api/admin/sellers', async (req, reply) => {
   const auth = requireAdmin(req);
   if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }

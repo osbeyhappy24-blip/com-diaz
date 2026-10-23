@@ -1816,7 +1816,7 @@ async function cleanupProductos() {
 }
 
 async function purgaProductos() {
-  const CAP_MAX = 10000;
+  const CAP_MAX = CATALOG_CAP;  // ← era 10000, ahora 5000 (coherencia con _cronSearch)
   const DIAS_PURGA = 90;
   let eliminados = 0;
   const sobrevivientes = [];
@@ -2512,14 +2512,40 @@ app.get('/api/admin/sellers', async (req, reply) => {
     const estado = req.query?.estado;
     const q = estado ? '?estado=eq.' + encodeURIComponent(estado) + '&order=created_at.desc' : '?order=created_at.desc';
     const sellers = await dbSelect('sellers', q);
-    // No devolver password_hash
+    // Cache de planes para resolver max_productos
+    let planesMap = {};
+    try {
+      const planes = await dbSelect('plans', '');
+      (planes || []).forEach(p => { planesMap[p.id] = p; });
+    } catch(_) {}
+
+    // No devolver password_hash + añadir plan resuelto
     const limpios = (sellers || []).map(s => {
       const { password_hash, ...rest } = s;
+      const plan = planesMap[rest.plan_id] || null;
+      rest.plan = plan;
+      rest.cuota_max = plan ? plan.max_productos : 50;
       return rest;
     });
     return { ok: true, total: limpios.length, sellers: limpios };
   } catch(e) {
     reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
+
+// ═══ ADMIN: ver productos de un seller específico ═══
+app.get('/api/admin/sellers/:id/products', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+  try {
+    const prods = await dbSelect('seller_products',
+      '?seller_id=eq.' + encodeURIComponent(req.params.id) + '&order=created_at.desc');
+    return { ok: true, total: (prods || []).length, products: prods || [] };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
   }
 });
 
@@ -3633,10 +3659,11 @@ RESPUESTA:`;
 // IA VISION — Analizar foto de producto local
 // ═══════════════════════════════════════════════════════
 // ═══ CONTADOR DE USO IA ═══
-const aiUsageCounters = {
-  fecha: new Date().toISOString().slice(0, 10),
-  productos: 0, fotos: 0, copiloto: 0, banners: 0, descripcion: 0, otros: 0,
-};
+// IA counters — persistidos en state para sobrevivir redeploy
+const aiUsageCounters = (state.aiUsageCounters && typeof state.aiUsageCounters === 'object')
+  ? state.aiUsageCounters
+  : { fecha: new Date().toISOString().slice(0, 10), productos: 0, fotos: 0, copiloto: 0, banners: 0, descripcion: 0, otros: 0 };
+state.aiUsageCounters = aiUsageCounters;
 
 function aiResetIfNewDay() {
   const hoy = new Date().toISOString().slice(0, 10);

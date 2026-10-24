@@ -2215,6 +2215,22 @@ app.post('/api/sre/config-telegram', async (req) => {
 // POST: registro de vendedor
 app.post('/api/seller/register', async (req, reply) => {
   try {
+    // ═══ RATE LIMIT: 3 registros / hora por IP ═══
+    const _ip = (req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown');
+    const _rlKey = 'register:' + _ip;
+    const _ahora = Date.now();
+    const _entry = rateLimitMap.get(_rlKey) || { count: 0, resetAt: _ahora + 60 * 60 * 1000 };
+    if (_ahora > _entry.resetAt) {
+      _entry.count = 0;
+      _entry.resetAt = _ahora + 60 * 60 * 1000;
+    }
+    if (_entry.count >= 3) {
+      reply.code(429);
+      return { ok: false, error: 'Demasiados registros desde esta red. Intenta más tarde.' };
+    }
+    _entry.count++;
+    rateLimitMap.set(_rlKey, _entry);
+
     const { nombre, telefono, password, provincia, municipio, email, plan_id } = req.body || {};
     
     if (!nombre || String(nombre).trim().length < 2) {

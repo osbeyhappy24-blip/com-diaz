@@ -317,8 +317,69 @@ const DEFAULTS = {
     bannerTexto: '',
     bannerColor: 'gradient',
     promociones: [
-      { id: 'p1', texto: 'Envio gratis en pedidos +$50', emoji: 'truck', color: 'green', activo: true }
+      {
+        id: 'p1',
+        texto: 'Envío GRATIS en pedidos +$50',
+        subtexto: 'Compra sin pagar extra',
+        emoji: '🚚',
+        color: 'gradient',
+        badge: 'HOT',
+        badgeColor: 'hot',
+        filtro: 'local',  // categoria o tipo de productos para los thumbnails
+        activo: true,
+        orden: 1
+      },
+      {
+        id: 'p2',
+        texto: '-25% en productos locales',
+        subtexto: 'Apoya lo cubano',
+        emoji: '🇨🇺',
+        color: 'yellow',
+        badge: 'OFERTA',
+        badgeColor: 'sale',
+        filtro: 'local',
+        activo: true,
+        orden: 2
+      },
+      {
+        id: 'p3',
+        texto: 'Compra 2 y llévate 3',
+        subtexto: 'Solo por esta semana',
+        emoji: '🎁',
+        color: 'purple',
+        badge: 'LIMITED',
+        badgeColor: 'limited',
+        filtro: 'all',
+        activo: true,
+        orden: 3
+      },
+      {
+        id: 'p4',
+        texto: 'Nuevos productos cada semana',
+        subtexto: 'Siempre algo nuevo',
+        emoji: '✨',
+        color: 'blue',
+        badge: 'NEW',
+        badgeColor: 'new',
+        filtro: 'ebay',
+        activo: true,
+        orden: 4
+      },
+      {
+        id: 'p5',
+        texto: 'Sin comisiones por WhatsApp',
+        subtexto: 'Compra directo al vendedor',
+        emoji: '💬',
+        color: 'green',
+        badge: 'FREE',
+        badgeColor: 'free',
+        filtro: 'all',
+        activo: true,
+        orden: 5
+      }
     ],
+    // Rotación más rápida: casi constante pero no mareante
+    rotacionSeg: 4,
     rotacionSeg: 5,
     // Frases generadas por IA (se rotan junto a las promociones)
     aiBanners: [],
@@ -3832,6 +3893,51 @@ app.get('/api/admin/referral-code/:sellerId', async (req, reply) => {
     };
   } catch(e) {
     app.log.error('[REFERRAL-CODE] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+
+// ═══ ADMIN: gestionar promociones del Shop ═══
+app.get('/api/admin/shop/promociones', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  return {
+    ok: true,
+    promociones: (state.shopConfig?.promociones || []).slice().sort((a,b) => (a.orden||99)-(b.orden||99)),
+    rotacionSeg: state.shopConfig?.rotacionSeg || 4
+  };
+});
+
+app.put('/api/admin/shop/promociones', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const { promociones, rotacionSeg } = req.body || {};
+    if (!Array.isArray(promociones)) {
+      reply.code(400); return { ok: false, error: 'promociones debe ser array' };
+    }
+    // Validar y normalizar
+    const normalizadas = promociones.slice(0, 10).map((p, i) => ({
+      id: String(p.id || 'p' + (i+1)),
+      texto: String(p.texto || '').slice(0, 80),
+      subtexto: p.subtexto ? String(p.subtexto).slice(0, 60) : null,
+      emoji: p.emoji ? String(p.emoji).slice(0, 5) : '✨',
+      color: ['gradient','yellow','purple','blue','green','orange','pink'].includes(p.color) ? p.color : 'gradient',
+      badge: p.badge ? String(p.badge).slice(0, 15) : null,
+      badgeColor: ['hot','sale','limited','new','free'].includes(p.badgeColor) ? p.badgeColor : 'hot',
+      filtro: ['all','local','ebay','seller'].includes(p.filtro) ? p.filtro : 'all',
+      activo: p.activo !== false,
+      orden: Number(p.orden) || (i+1)
+    })).filter(p => p.texto.length >= 3);
+    
+    state.shopConfig = state.shopConfig || {};
+    state.shopConfig.promociones = normalizadas;
+    if (rotacionSeg) state.shopConfig.rotacionSeg = Math.max(3, Math.min(15, Number(rotacionSeg)));
+    await save();
+    return { ok: true, total: normalizadas.length, rotacionSeg: state.shopConfig.rotacionSeg };
+  } catch(e) {
     reply.code(500);
     return { ok: false, error: e.message };
   }

@@ -5549,6 +5549,42 @@ app.get('/api/public/config', async (req, reply) => {
   }
 });
 
+
+// ═══ TEST: endpoint ultra simple sin promociones ═══
+app.get('/api/public/config-test', async (req, reply) => {
+  try {
+    const cfg = state.shopConfig || {};
+    return {
+      ok: true,
+      config: {
+        titulo: String(cfg.titulo || 'Comdiaz Shop'),
+        whatsapp: String(cfg.whatsapp || ''),
+        maxProductos: Number(cfg.maxProductos) || 200,
+        rotacionSeg: Number(cfg.rotacionSeg) || 5
+      }
+    };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+// ═══ TEST 2: solo promociones ═══
+app.get('/api/public/config-test2', async (req, reply) => {
+  try {
+    const cfg = state.shopConfig || {};
+    const promos = (cfg.promociones || []).map(p => ({
+      id: String(p.id || ''),
+      texto: String(p.texto || ''),
+      emoji: String(p.emoji || '✨')
+    }));
+    return { ok: true, promociones: promos };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 // ═══ DEBUG: endpoint simple para diagnosticar (temporal) ═══
 app.get('/api/public/config-debug', async (req, reply) => {
   try {

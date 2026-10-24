@@ -2873,7 +2873,11 @@ async function enviarPushSeller(sellerId, notif) {
   const subs = (state.sellerSubscriptions || []).filter(function(s) {
     return s.sellerId === sellerId;
   });
-  if (!subs.length) return;
+  app.log.info('[PUSH-SELLER] ' + sellerId.slice(0, 8) + '... → ' + subs.length + ' subs');
+  if (!subs.length) {
+    app.log.warn('[PUSH-SELLER] Sin suscripciones para este seller');
+    return;
+  }
 
   const payload = JSON.stringify({
     title: notif.titulo,
@@ -3745,17 +3749,28 @@ async function _aplicarBonusReferral(sellerAprobado) {
     refRec.referrals_made.push(sellerAprobado.id);
     await save();
     
-    // Notificar al referente
-    crearNotificacion({
-      user_type: 'seller',
-      user_id: referenteId,
-      tipo: 'referral_bonus',
-      titulo: '🎁 +5 productos por referido',
-      mensaje: sellerAprobado.nombre + ' se registró con tu link y fue aprobado. Ahora tienes +5 productos disponibles.',
-      accion_url: 'seller-panel.html'
-    });
+    // Notificar al referente (in-app)
+    try {
+      crearNotificacion({
+        user_type: 'seller',
+        user_id: referenteId,
+        tipo: 'referral_bonus',
+        titulo: '🎁 +5 productos por referido',
+        mensaje: sellerAprobado.nombre + ' se registró con tu link y fue aprobado. Ahora tienes +5 productos extra en tu cuenta.',
+        accion_url: 'seller-panel.html'
+      });
+      app.log.info('[REFERRAL-NOTIF] In-app creada para ' + referenteId);
+    } catch(e) {
+      app.log.error('[REFERRAL-NOTIF-INAPP] ' + e.message);
+    }
     
-    notifyTelegram('🎁 <b>REFERIDO APROBADO</b>\n\n👤 Referente: ' + referente.nombre + '\n🎉 Referido: ' + sellerAprobado.nombre + '\n📊 Bonus: ' + refRec.ref_bonus_quota + '/50 (+5)').catch(() => {});
+    // Notificar por Telegram
+    try {
+      await notifyTelegram('🎁 <b>REFERIDO APROBADO</b>\n\n👤 Referente: ' + (referente.nombre || '?') + '\n🎉 Referido: ' + (sellerAprobado.nombre || '?') + '\n📊 Bonus: ' + refRec.ref_bonus_quota + '/50 (+5)');
+      app.log.info('[REFERRAL-NOTIF] Telegram enviado');
+    } catch(e) {
+      app.log.error('[REFERRAL-NOTIF-TG] ' + e.message);
+    }
     
     app.log.info('[REFERRAL] +5 al referente ' + referente.nombre + ' por ' + sellerAprobado.nombre);
     return { referente: referente.nombre, bonus: refRec.ref_bonus_quota };

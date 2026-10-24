@@ -112,6 +112,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/ebay-notification')) return;
   if (req.url.startsWith('/api/pin/change')) return;
   if (req.url.startsWith('/api/app-version') && req.method === 'GET') return;
+  if (req.url.startsWith('/api/admin/reset-ratelimit')) return;  // reset bypass
   const expected = state.pin;
   if (!expected) { reply.code(503).send({ ok: false, error: 'Servicio no configurado' }); return; }
 
@@ -3165,6 +3166,29 @@ app.post('/api/admin/sellers/:id/force-expiry', async (req, reply) => {
     const nuevaFecha = new Date(Date.now() + offset * 24 * 3600 * 1000).toISOString();
     await dbUpdate('sellers', req.params.id, { plan_expira_at: nuevaFecha });
     return { ok: true, plan_expira_at: nuevaFecha, offsetDias: offset };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+
+// ═══ ADMIN: resetear rate limit + failMap (útil para tests) ═══
+app.post('/api/admin/reset-ratelimit', async (req, reply) => {
+  // Este endpoint NO pasa por el gate (exento abajo) para poder resetearlo incluso desde la IP bloqueada
+  const key = String(req.headers['x-comdiaz-key'] || '');
+  const expected = String(state.pin || '');
+  const a = Buffer.from(key), b = Buffer.from(expected);
+  if (a.length !== b.length || !require('crypto').timingSafeEqual(a, b)) {
+    reply.code(401); return { ok: false, error: 'No autorizado' };
+  }
+  try {
+    const rl = rateLimitMap.size;
+    const fm = failMap.size;
+    rateLimitMap.clear();
+    failMap.clear();
+    state.loginAttempts = {};
+    return { ok: true, clearedRateLimit: rl, clearedFailMap: fm, clearedLoginAttempts: true };
   } catch(e) {
     reply.code(500);
     return { ok: false, error: e.message };

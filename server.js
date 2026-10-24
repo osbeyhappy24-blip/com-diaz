@@ -3672,9 +3672,47 @@ async function _aplicarBonusReferral(sellerAprobado) {
     if (!state.referrals) state.referrals = {};
     // Buscar si este seller tiene referred_by
     const rec = state.referrals[sellerAprobado.id];
-    if (!rec || !rec.referred_by) return null;
+    if (!rec) return null;
     
-    const referenteId = rec.referred_by;
+    let referenteId = rec.referred_by;
+    
+    // ─── RESOLUCIÓN LAZY: si referred_by es null pero hay código, resolver ahora ───
+    if (!referenteId && rec.referred_by_code) {
+      app.log.info('[REFERRAL-LAZY] Resolviendo código: ' + rec.referred_by_code);
+      const codigoBuscado = String(rec.referred_by_code).toUpperCase().trim();
+      
+      // Buscar en state.referrals
+      for (const sid of Object.keys(state.referrals || {})) {
+        if (state.referrals[sid].code === codigoBuscado) {
+          referenteId = sid;
+          break;
+        }
+      }
+      
+      // Fallback: buscar en todos los sellers
+      if (!referenteId) {
+        const todos = await dbSelect('sellers', '?select=id,nombre,telefono');
+        for (const sl of (todos || [])) {
+          const r = _getReferralRecord(sl.id, sl);
+          if (r.code === codigoBuscado) {
+            referenteId = sl.id;
+            break;
+          }
+        }
+      }
+      
+      // Guardar resolved
+      if (referenteId) {
+        rec.referred_by = referenteId;
+        await save();
+        app.log.info('[REFERRAL-LAZY] Resuelto: ' + codigoBuscado + ' → ' + referenteId);
+      } else {
+        app.log.warn('[REFERRAL-LAZY] Código no válido: ' + codigoBuscado);
+        return null;
+      }
+    }
+    
+    if (!referenteId) return null;
     const referente = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(referenteId));
     if (!referente || referente.estado !== 'aprobado') return null;
     
@@ -3813,6 +3851,65 @@ app.post('/api/admin/sellers/:id/products/:pid/reactivate', async (req, reply) =
 
     return { ok: true, productId: req.params.pid, activo: true, publicado: true };
   } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+
+// ═══ ADMIN: reparar referred_by manualmente ═══
+app.post('/api/admin/referral/repair', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const { sellerId, referrerCode } = req.body || {};
+    if (!sellerId || !referrerCode) {
+      reply.code(400); return { ok: false, error: 'sellerId y referrerCode requeridos' };
+    }
+    
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(sellerId));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Seller no existe' }; }
+    
+    let referenteId = null;
+    const codigoBuscado = String(referrerCode).toUpperCase().trim();
+    
+    for (const sid of Object.keys(state.referrals || {})) {
+      if (state.referrals[sid].code === codigoBuscado) {
+        referenteId = sid;
+        break;
+      }
+    }
+    
+    if (!referenteId) {
+      const todos = await dbSelect('sellers', '?select=id,nombre,telefono');
+      for (const sl of (todos || [])) {
+        const rec = _getReferralRecord(sl.id, sl);
+        if (rec.code === codigoBuscado) {
+          referenteId = sl.id;
+          break;
+        }
+      }
+    }
+    
+    if (!referenteId) {
+      reply.code(404); return { ok: false, error: 'Código no válido: ' + codigoBuscado };
+    }
+    
+    const recSeller = _getReferralRecord(seller.id, seller);
+    recSeller.referred_by = referenteId;
+    recSeller.referred_by_code = codigoBuscado;
+    await save();
+    
+    app.log.info('[REFERRAL-REPAIR] ' + seller.id + ' → ' + referenteId);
+    
+    let bonusAplicado = null;
+    if (seller.estado === 'aprobado') {
+      bonusAplicado = await _aplicarBonusReferral(seller);
+    }
+    
+    return { ok: true, sellerId: seller.id, referred_by: referenteId, bonusAplicado };
+  } catch(e) {
+    app.log.error('[REFERRAL-REPAIR] ' + e.message);
     reply.code(500);
     return { ok: false, error: e.message };
   }

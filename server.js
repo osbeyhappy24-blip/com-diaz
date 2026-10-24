@@ -329,7 +329,8 @@ const DEFAULTS = {
   subscriptions: [],
   sellerSubscriptions: [],  // Push subs de vendedores
   notifications: [],
-  payments: [],  // Sistema de pagos        // FIX: notificaciones in-app (antes no estaba en DEFAULTS)
+  payments: [],
+  referrals: {},  // Sistema de referidos  // Sistema de pagos        // FIX: notificaciones in-app (antes no estaba en DEFAULTS)
   aiUsageCounters: null,    // FIX: se inicializa en línea 3663
   // Web Push: suscripciones vinculadas a pedidos
   tesoreria: {
@@ -2259,7 +2260,7 @@ app.post('/api/seller/register', async (req, reply) => {
     _entry.count++;
     rateLimitMap.set(_rlKey, _entry);
 
-    const { nombre, telefono, password, provincia, municipio, email, plan_id } = req.body || {};
+    const { nombre, telefono, password, provincia, municipio, email, plan_id, referred_by_code } = req.body || {};
     
     if (!nombre || String(nombre).trim().length < 2) {
       reply.code(400); return { ok: false, error: 'Nombre inválido' };
@@ -2290,6 +2291,22 @@ app.post('/api/seller/register', async (req, reply) => {
       } catch(_) {}
     }
     
+    // Crear/obtener registro de referidos
+    if (!state.referrals) state.referrals = {};
+    
+    // Buscar referente si el código es válido
+    let referenteId = null;
+    if (referred_by_code) {
+      try {
+        for (const sid of Object.keys(state.referrals)) {
+          if (state.referrals[sid].code === String(referred_by_code).toUpperCase()) {
+            referenteId = sid;
+            break;
+          }
+        }
+      } catch(_) {}
+    }
+
     const nuevo = await dbInsert('sellers', {
       nombre: String(nombre).trim().slice(0, 80),
       telefono: tel,
@@ -2406,8 +2423,8 @@ app.get('/api/seller/me', async (req, reply) => {
         plan: plan || null,
         plan_expira_at: seller.plan_expira_at,
         cuota_usada: productosCount,
-        cuota_max: plan ? plan.max_productos : 50,
-        cuota_disponible: plan ? Math.max(0, plan.max_productos - productosCount) : 0,
+        cuota_max: (plan ? plan.max_productos : 50) + _getBonusQuota(seller.id),
+        cuota_disponible: Math.max(0, (plan ? plan.max_productos : 50) + _getBonusQuota(seller.id) - productosCount),
         created_at: seller.created_at,
       }
     };
@@ -2465,7 +2482,7 @@ app.post('/api/seller/products', async (req, reply) => {
     }
     
     const plan = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(seller.plan_id));
-    const cuotaMax = plan ? plan.max_productos : 50;
+    const cuotaMax = (plan ? plan.max_productos : 50) + _getBonusQuota(seller.id);
     
     if (cuotaMax !== -1) {
       const actuales = await dbCount('seller_products', '?seller_id=eq.' + encodeURIComponent(seller.id) + '&activo=eq.true');
@@ -3521,6 +3538,196 @@ app.put('/api/admin/payment-methods', async (req, reply) => {
   }
 });
 
+
+// ═══════════════════════════════════════════════════════
+// SISTEMA DE REFERIDOS
+// Storage: state.referrals = { [sellerId]: {code, referred_by, ref_count, ref_bonus_quota, ref_last_reset, referrals_made} }
+// Regla: +5 prod por referido aprobado, cap 3/mes, tope +50 acumulado
+// ═══════════════════════════════════════════════════════
+
+// ── Helper: generar código único de referido ──
+function _generarReferralCode(nombre, telefono) {
+  const base = (nombre || 'USER').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 5) || 'USER';
+  const num = String(telefono || '').replace(/\D/g, '').slice(-4) || '0000';
+  const rnd = Math.random().toString(36).slice(2, 5).toUpperCase();
+  return base + num + rnd; // ej: OSBEY0267XYZ
+}
+
+// ── Helper: obtener o crear registro de referidos del seller ──
+function _getReferralRecord(sellerId, seller) {
+  if (!state.referrals) state.referrals = {};
+  if (!state.referrals[sellerId]) {
+    state.referrals[sellerId] = {
+      code: seller ? _generarReferralCode(seller.nombre, seller.telefono) : ('REF' + Date.now()),
+      referred_by: null,
+      ref_count: 0,
+      ref_bonus_quota: 0,
+      ref_last_reset: new Date().toISOString().slice(0, 10),
+      referrals_made: []
+    };
+  }
+  return state.referrals[sellerId];
+}
+
+// ── Helper: obtener cuota extra del seller ──
+function _getBonusQuota(sellerId) {
+  const r = state.referrals?.[sellerId];
+  return r ? (Number(r.ref_bonus_quota) || 0) : 0;
+}
+
+// ── Helper: reset mensual (cron llama esto) ──
+function _resetMonthlyRefs() {
+  if (!state.referrals) return 0;
+  const hoy = new Date().toISOString().slice(0, 10);
+  let reseteados = 0;
+  for (const sid of Object.keys(state.referrals)) {
+    const r = state.referrals[sid];
+    const ultimoReset = r.ref_last_reset || '2020-01-01';
+    const [ay, am, ad] = ultimoReset.split('-').map(Number);
+    const [hy, hm, hd] = hoy.split('-').map(Number);
+    // Si cambió de mes
+    if (ay !== hy || am !== hm) {
+      r.ref_count = 0;
+      r.ref_last_reset = hoy;
+      reseteados++;
+    }
+  }
+  return reseteados;
+}
+
+// ── Endpoint GET /api/seller/referral — link + stats ──
+app.get('/api/seller/referral', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(payload.sellerId));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Seller no existe' }; }
+    
+    const rec = _getReferralRecord(seller.id, seller);
+    // Asegurar reset mensual
+    _resetMonthlyRefs();
+    await save();
+    
+    // Resolver nombres de los referidos
+    const referidos_info = [];
+    for (const rid of (rec.referrals_made || [])) {
+      try {
+        const s = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(rid) + '&select=nombre,estado,created_at');
+        if (s) referidos_info.push({ nombre: s.nombre, estado: s.estado, fecha: s.created_at });
+      } catch(_) {}
+    }
+    
+    const baseUrl = 'https://com-diaz-web.onrender.com';
+    return {
+      ok: true,
+      code: rec.code,
+      link: baseUrl + '/seller.html?ref=' + rec.code,
+      link_shop: baseUrl + '/shop.html?ref=' + rec.code,
+      ref_count: rec.ref_count || 0,
+      ref_bonus_quota: rec.ref_bonus_quota || 0,
+      cap_mensual: 3,
+      tope_total: 50,
+      referrals: referidos_info,
+      reset_at: rec.ref_last_reset
+    };
+  } catch(e) {
+    app.log.error('[REFERRAL-GET] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+// ── Aplicar bonus al aprobar un seller referido ──
+async function _aplicarBonusReferral(sellerAprobado) {
+  try {
+    if (!state.referrals) state.referrals = {};
+    // Buscar si este seller tiene referred_by
+    const rec = state.referrals[sellerAprobado.id];
+    if (!rec || !rec.referred_by) return null;
+    
+    const referenteId = rec.referred_by;
+    const referente = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(referenteId));
+    if (!referente || referente.estado !== 'aprobado') return null;
+    
+    // Verificar que no se haya aplicado ya
+    const refRec = _getReferralRecord(referenteId, referente);
+    if (!refRec.referrals_made) refRec.referrals_made = [];
+    if (refRec.referrals_made.includes(sellerAprobado.id)) {
+      app.log.info('[REFERRAL] Ya contado: ' + sellerAprobado.id);
+      return null;
+    }
+    
+    // Reset mensual preventivo
+    _resetMonthlyRefs();
+    
+    // Verificar cap mensual (3)
+    if (refRec.ref_count >= 3) {
+      app.log.info('[REFERRAL] Cap mensual alcanzado para ' + referente.nombre);
+      return null;
+    }
+    
+    // Verificar tope total (50)
+    if (refRec.ref_bonus_quota >= 50) {
+      app.log.info('[REFERRAL] Tope total alcanzado para ' + referente.nombre);
+      return null;
+    }
+    
+    // Aplicar bonus
+    refRec.ref_count = (refRec.ref_count || 0) + 1;
+    refRec.ref_bonus_quota = Math.min((refRec.ref_bonus_quota || 0) + 5, 50);
+    refRec.referrals_made.push(sellerAprobado.id);
+    await save();
+    
+    // Notificar al referente
+    crearNotificacion({
+      user_type: 'seller',
+      user_id: referenteId,
+      tipo: 'referral_bonus',
+      titulo: '🎁 +5 productos por referido',
+      mensaje: sellerAprobado.nombre + ' se registró con tu link y fue aprobado. Ahora tienes +5 productos disponibles.',
+      accion_url: 'seller-panel.html'
+    });
+    
+    notifyTelegram('🎁 <b>REFERIDO APROBADO</b>\n\n👤 Referente: ' + referente.nombre + '\n🎉 Referido: ' + sellerAprobado.nombre + '\n📊 Bonus: ' + refRec.ref_bonus_quota + '/50 (+5)').catch(() => {});
+    
+    app.log.info('[REFERRAL] +5 al referente ' + referente.nombre + ' por ' + sellerAprobado.nombre);
+    return { referente: referente.nombre, bonus: refRec.ref_bonus_quota };
+  } catch(e) {
+    app.log.error('[REFERRAL-APPLY] ' + e.message);
+    return null;
+  }
+}
+
+// ── Endpoint admin: dashboard referidos ──
+app.get('/api/admin/referrals', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const data = [];
+    for (const sid of Object.keys(state.referrals || {})) {
+      const r = state.referrals[sid];
+      if (!r.ref_count && !r.ref_bonus_quota) continue; // solo los que tienen actividad
+      try {
+        const s = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(sid) + '&select=id,nombre,telefono,estado');
+        if (s) {
+          data.push({
+            seller: s,
+            code: r.code,
+            ref_count: r.ref_count || 0,
+            ref_bonus_quota: r.ref_bonus_quota || 0,
+            referrals_made: (r.referrals_made || []).length
+          });
+        }
+      } catch(_) {}
+    }
+    data.sort((a, b) => (b.ref_bonus_quota || 0) - (a.ref_bonus_quota || 0));
+    return { ok: true, total: data.length, referrals: data };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 // ═══ ADMIN: reactivar un producto específico de un seller ═══
 app.post('/api/admin/sellers/:id/products/:pid/reactivate', async (req, reply) => {
   const auth = requireAdmin(req);
@@ -3606,6 +3813,9 @@ app.post('/api/admin/sellers/:id/approve', async (req, reply) => {
       mensaje: 'Ya puedes publicar productos en Comdiaz Shop. Entra a tu panel para empezar.',
       accion_url: 'seller-panel.html'
     });
+    
+    // Aplicar bonus de referidos si aplica
+    _aplicarBonusReferral(seller).catch(() => {});
     
     return { ok: true, seller: { id: seller.id, nombre: seller.nombre, estado: seller.estado } };
   } catch(e) {

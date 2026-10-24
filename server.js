@@ -280,6 +280,33 @@ const DEFAULTS = {
   productosManuales: [], // productos locales agregados manualmente // IDs publicados al catálogo público
   shopConfig: {
     whatsapp: '5351425691',
+    // ═══ Métodos de pago (editables por admin en home.html) ═══
+    paymentMethods: [
+      {
+        id: 'zelle',
+        nombre: 'Zelle',
+        icono: '🏦',
+        datos: 'admin@comdiaz.com (a completar)',
+        instrucciones: 'Envía el monto exacto. Adjunta captura del comprobante.',
+        activo: true
+      },
+      {
+        id: 'usdt',
+        nombre: 'USDT (TRC20)',
+        icono: '💎',
+        datos: 'TRxxxxxxxxxxxxxxxxxx (a completar)',
+        instrucciones: 'Envía el monto exacto a esta dirección TRC20. Adjunta hash de transacción.',
+        activo: true
+      },
+      {
+        id: 'cup',
+        nombre: 'CUP (Efectivo/Transferencia)',
+        icono: '🇨🇺',
+        datos: 'Contacta por WhatsApp para coordinar',
+        instrucciones: 'Coordina entrega o transferencia con el admin.',
+        activo: true
+      }
+    ],
     titulo: 'Comdiaz Shop',
     subtitulo: 'Productos importados y locales',
     horarioAtencion: 'Lun-Sab 9:00am - 9:00pm',
@@ -301,7 +328,8 @@ const DEFAULTS = {
   activityLog: [], // ultimos eventos
   subscriptions: [],
   sellerSubscriptions: [],  // Push subs de vendedores
-  notifications: [],        // FIX: notificaciones in-app (antes no estaba en DEFAULTS)
+  notifications: [],
+  payments: [],  // Sistema de pagos        // FIX: notificaciones in-app (antes no estaba en DEFAULTS)
   aiUsageCounters: null,    // FIX: se inicializa en línea 3663
   // Web Push: suscripciones vinculadas a pedidos
   tesoreria: {
@@ -3232,6 +3260,266 @@ app.post('/api/admin/reset-ratelimit', async (req, reply) => {
   }
 });
 
+
+
+// ═══════════════════════════════════════════════════════
+// SISTEMA DE PAGOS
+// ═══════════════════════════════════════════════════════
+
+// ── Helper: crear pago pendiente ──
+function _crearPago(sellerId, planId, montoUsd, metodo, notas) {
+  if (!state.payments) state.payments = [];
+  const pago = {
+    id: 'pay_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+    seller_id: sellerId,
+    plan_id: planId,
+    monto_usd: Number(montoUsd),
+    metodo: metodo || null,
+    notas: notas || null,
+    estado: 'pendiente', // pendiente | aprobado | rechazado
+    created_at: new Date().toISOString(),
+    aprobado_at: null,
+    aprobado_por: null,
+    motivo_rechazo: null
+  };
+  state.payments.push(pago);
+  // Cap 1000 pagos (LRU)
+  if (state.payments.length > 1000) {
+    state.payments = state.payments.slice(-1000);
+  }
+  return pago;
+}
+
+// ── GET /api/seller/payment/options — métodos disponibles ──
+app.get('/api/seller/payment/options', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  const metodos = (state.shopConfig?.paymentMethods || []).filter(m => m.activo !== false);
+  return {
+    ok: true,
+    methods: metodos,
+    whatsapp: state.shopConfig?.whatsapp || '5351425691'
+  };
+});
+
+// ── POST /api/seller/payment/request — crear pago pendiente ──
+app.post('/api/seller/payment/request', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const { plan_id, metodo, notas } = req.body || {};
+    if (!plan_id) { reply.code(400); return { ok: false, error: 'plan_id requerido' }; }
+
+    const plan = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(plan_id));
+    if (!plan) { reply.code(404); return { ok: false, error: 'Plan no existe' }; }
+
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(payload.sellerId));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Seller no existe' }; }
+
+    // Verificar si ya hay pago pendiente
+    const pendiente = (state.payments || []).find(p =>
+      p.seller_id === seller.id && p.estado === 'pendiente'
+    );
+    if (pendiente) {
+      reply.code(429);
+      return {
+        ok: false,
+        error: 'Ya tienes un pago pendiente. Espera confirmación del admin.',
+        pago_id: pendiente.id
+      };
+    }
+
+    const pago = _crearPago(seller.id, plan_id, plan.precio_usd, metodo, notas);
+    save().catch(() => {});
+
+    // Notificar al admin por Telegram
+    notifyTelegram(
+      '💳 <b>NUEVO PAGO PENDIENTE</b>\n\n' +
+      '👤 ' + seller.nombre + '\n' +
+      '📱 ' + seller.telefono + '\n' +
+      '💼 Plan: ' + plan.nombre + ' ($' + plan.precio_usd + ')\n' +
+      '💰 Método: ' + (metodo || 'no especificado') + '\n' +
+      (notas ? '📝 ' + notas + '\n' : '') +
+      '\n👉 Verificar en panel admin'
+    ).catch(() => {});
+
+    // Notificar al seller in-app
+    crearNotificacion({
+      user_type: 'seller',
+      user_id: seller.id,
+      tipo: 'pago_pendiente',
+      titulo: '💳 Pago en revisión',
+      mensaje: 'Recibimos tu solicitud de pago. El admin lo verificará y activará tu plan en las próximas horas.',
+      accion_url: 'seller-panel.html'
+    });
+
+    return { ok: true, pago: { id: pago.id, estado: pago.estado } };
+  } catch(e) {
+    app.log.error('[PAYMENT-REQUEST] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+// ── GET /api/seller/payments — historial del vendedor ──
+app.get('/api/seller/payments', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  const pagos = (state.payments || [])
+    .filter(p => p.seller_id === payload.sellerId)
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, 20);
+  return { ok: true, payments: pagos };
+});
+
+// ── GET /api/admin/payments — cola admin ──
+app.get('/api/admin/payments', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const estado = req.query?.estado || 'pendiente';
+    let pagos = (state.payments || []);
+    if (estado !== 'todos') {
+      pagos = pagos.filter(p => p.estado === estado);
+    }
+    pagos = pagos.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 50);
+
+    // Enriquecer con datos del seller y plan
+    const enriquecidos = [];
+    for (const p of pagos) {
+      try {
+        const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(p.seller_id) + '&select=id,nombre,telefono,plan_id');
+        const plan = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(p.plan_id) + '&select=id,nombre,precio_usd');
+        enriquecidos.push(Object.assign({}, p, { seller, plan }));
+      } catch(_) {
+        enriquecidos.push(p);
+      }
+    }
+    return { ok: true, payments: enriquecidos, total: enriquecidos.length };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+// ── POST /api/admin/payments/:id/approve — aprobar y activar ──
+app.post('/api/admin/payments/:id/approve', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const pago = (state.payments || []).find(p => p.id === req.params.id);
+    if (!pago) { reply.code(404); return { ok: false, error: 'Pago no encontrado' }; }
+    if (pago.estado !== 'pendiente') {
+      reply.code(400); return { ok: false, error: 'Pago ya procesado' };
+    }
+
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(pago.seller_id));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Seller no existe' }; }
+    const plan = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(pago.plan_id));
+    if (!plan) { reply.code(404); return { ok: false, error: 'Plan no existe' }; }
+
+    // Extender plan desde la fecha actual (o desde la expiración si es futura)
+    const ahora = Date.now();
+    const expiraActual = seller.plan_expira_at ? new Date(seller.plan_expira_at).getTime() : 0;
+    const base = expiraActual > ahora ? expiraActual : ahora;
+    const nuevaFecha = new Date(base + 30 * 24 * 3600 * 1000);
+
+    await dbUpdate('sellers', seller.id, {
+      plan_id: pago.plan_id,
+      plan_expira_at: nuevaFecha.toISOString(),
+      estado: 'aprobado',
+      activo: true,
+      notas_internas: null,
+      updated_at: new Date().toISOString()
+    });
+
+    // Actualizar estado del pago
+    pago.estado = 'aprobado';
+    pago.aprobado_at = new Date().toISOString();
+    pago.aprobado_por = 'admin';
+    await save();
+
+    // Notificar al seller
+    crearNotificacion({
+      user_type: 'seller',
+      user_id: seller.id,
+      tipo: 'pago_aprobado',
+      titulo: '✅ Pago confirmado',
+      mensaje: 'Tu plan ' + plan.nombre + ' está activo hasta ' + nuevaFecha.toLocaleDateString('es') + '. ¡Gracias por confiar en Comdiaz!',
+      accion_url: 'seller-panel.html'
+    });
+
+    notifyTelegram('✅ <b>PAGO APROBADO</b>\n\n👤 ' + seller.nombre + '\n💼 ' + plan.nombre + '\n📅 Hasta: ' + nuevaFecha.toLocaleDateString('es')).catch(() => {});
+
+    return { ok: true, pago: { id: pago.id, estado: pago.estado }, plan_expira_at: nuevaFecha.toISOString() };
+  } catch(e) {
+    app.log.error('[PAYMENT-APPROVE] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+// ── POST /api/admin/payments/:id/reject — rechazar con motivo ──
+app.post('/api/admin/payments/:id/reject', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const { motivo } = req.body || {};
+    const pago = (state.payments || []).find(p => p.id === req.params.id);
+    if (!pago) { reply.code(404); return { ok: false, error: 'Pago no encontrado' }; }
+    if (pago.estado !== 'pendiente') {
+      reply.code(400); return { ok: false, error: 'Pago ya procesado' };
+    }
+
+    pago.estado = 'rechazado';
+    pago.motivo_rechazo = motivo || 'No especificado';
+    pago.aprobado_at = new Date().toISOString();
+    await save();
+
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(pago.seller_id));
+    if (seller) {
+      crearNotificacion({
+        user_type: 'seller',
+        user_id: seller.id,
+        tipo: 'pago_rechazado',
+        titulo: '⚠️ Pago no confirmado',
+        mensaje: 'Motivo: ' + pago.motivo_rechazo + '. Contacta al admin para más información.',
+        accion_url: 'seller-panel.html'
+      });
+    }
+
+    return { ok: true, pago: { id: pago.id, estado: pago.estado, motivo_rechazo: pago.motivo_rechazo } };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+// ── GET /api/admin/payment-methods — ver/editar métodos ──
+app.get('/api/admin/payment-methods', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  return { ok: true, methods: state.shopConfig?.paymentMethods || [] };
+});
+
+// ── PUT /api/admin/payment-methods — actualizar métodos ──
+app.put('/api/admin/payment-methods', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const { methods } = req.body || {};
+    if (!Array.isArray(methods)) {
+      reply.code(400); return { ok: false, error: 'methods debe ser array' };
+    }
+    state.shopConfig = state.shopConfig || {};
+    state.shopConfig.paymentMethods = methods;
+    await save();
+    return { ok: true, total: methods.length };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
 
 // ═══ ADMIN: reactivar un producto específico de un seller ═══
 app.post('/api/admin/sellers/:id/products/:pid/reactivate', async (req, reply) => {

@@ -5537,11 +5537,11 @@ app.get('/api/public/config', async (req, reply) => {
 
     app.log.info('[PUBLIC-CONFIG] OK: ' + json.length + 'B, ' + promociones.length + ' promos, ' + aiBanners.length + ' AI');
 
-    // Enviar como string puro
-    reply.header('Content-Type', 'application/json; charset=utf-8');
+    // IMPORTANTE: usar return (objeto), NO reply.send(string)
+    // Fastify tiene hook de serialización que rompe con strings pre-serializados
     reply.header('Cache-Control', 'no-store, no-cache, must-revalidate');
     reply.header('Pragma', 'no-cache');
-    reply.send(json);
+    return response;
   } catch(e) {
     app.log.error('[PUBLIC-CONFIG] Error: ' + e.message);
     reply.code(500);

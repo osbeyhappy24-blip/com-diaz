@@ -1912,6 +1912,156 @@ async function purgaProductos() {
 }
 
 let cronWeekly = null, cronDaily = null, cronCleanup = null, cronPurga = null, cronSRE = null, cronMensual = null, cronLocalDesc = null;
+
+// ═══════════════════════════════════════════════════════
+// CRON: Caducidad de planes + avisos + suspensión
+// Diario 09:00. Envía 4 avisos progresivos + suspende a las 24h de gracia.
+// ═══════════════════════════════════════════════════════
+let cronPlanExpiry = null;
+function schedulePlanExpiry() {
+  if (cronPlanExpiry) cronPlanExpiry.stop();
+  const tz = APP_TZ;
+  cronPlanExpiry = cron.schedule('0 9 * * *', async function() {
+    app.log.info('[CRON-PLAN] Revisión de caducidad');
+    try {
+      const sellers = await dbSelect('sellers', '?estado=eq.aprobado');
+      const ahora = new Date();
+      let avisos = 0, suspendidos = 0;
+
+      for (const seller of (sellers || [])) {
+        if (!seller.plan_expira_at) continue;
+        const plan = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(seller.plan_id));
+        if (!plan || Number(plan.precio_usd) === 0) continue;
+
+        const expira = new Date(seller.plan_expira_at);
+        const msDiff = expira - ahora;
+        const diasRestantes = Math.ceil(msDiff / (24 * 3600 * 1000));
+
+        // Anti-spam: log por seller y por tipo de aviso
+        state.planNotifLog = state.planNotifLog || {};
+        const log = state.planNotifLog[seller.id] || {};
+        const hoy = ahora.toISOString().slice(0, 10);
+
+        const yaEnviado = (clave) => log[clave] === hoy;
+        const marcarEnviado = (clave) => { log[clave] = hoy; };
+
+        // Aviso 7 días
+        if (diasRestantes === 7 && !yaEnviado('7d')) {
+          crearNotificacion({
+            user_type: 'seller', user_id: seller.id,
+            tipo: 'plan_por_vencer_7d',
+            titulo: '⏰ Tu plan vence en 7 días',
+            mensaje: 'Tu plan ' + plan.nombre + ' vence el ' + expira.toLocaleDateString('es') + '. Renueva para seguir vendiendo sin interrupciones.',
+            accion_url: 'seller-panel.html'
+          });
+          marcarEnviado('7d'); avisos++;
+        }
+        // Aviso 3 días
+        else if (diasRestantes === 3 && !yaEnviado('3d')) {
+          crearNotificacion({
+            user_type: 'seller', user_id: seller.id,
+            tipo: 'plan_por_vencer_3d',
+            titulo: '⏰ Tu plan vence en 3 días',
+            mensaje: 'Tu plan ' + plan.nombre + ' vence el ' + expira.toLocaleDateString('es') + '. Toca aquí para renovar.',
+            accion_url: 'seller-panel.html'
+          });
+          marcarEnviado('3d'); avisos++;
+        }
+        // Aviso 1 día
+        else if (diasRestantes === 1 && !yaEnviado('1d')) {
+          crearNotificacion({
+            user_type: 'seller', user_id: seller.id,
+            tipo: 'plan_por_vencer_1d',
+            titulo: '⏰ Tu plan vence MAÑANA',
+            mensaje: 'Últimas 24 horas para renovar. Después de mañana, tus productos dejarán de ser visibles.',
+            accion_url: 'seller-panel.html'
+          });
+          marcarEnviado('1d'); avisos++;
+        }
+        // Día del vencimiento (gracia)
+        else if (diasRestantes === 0 && !yaEnviado('gracia')) {
+          crearNotificacion({
+            user_type: 'seller', user_id: seller.id,
+            tipo: 'plan_en_gracia',
+            titulo: '⚠️ Tu plan venció — 24h de gracia',
+            mensaje: 'Tu plan venció hoy. Tienes 24h para renovar. Tus productos siguen visibles durante este periodo.',
+            accion_url: 'seller-panel.html'
+          });
+          marcarEnviado('gracia'); avisos++;
+        }
+        // -1 día o más: suspender
+        else if (diasRestantes <= -1 && !yaEnviado('suspendido')) {
+          await dbUpdate('sellers', seller.id, { estado: 'suspendido_pago' });
+          crearNotificacion({
+            user_type: 'seller', user_id: seller.id,
+            tipo: 'suspendido_pago',
+            titulo: '🔒 Cuenta suspendida por falta de pago',
+            mensaje: 'Tu plan venció hace más de 24h. Tus productos ya no son visibles en la tienda. Renueva para reactivar todo al instante — conservas productos, cuota e historial.',
+            accion_url: 'seller-panel.html'
+          });
+          notifyTelegram('🔒 <b>SUSPENDIDO POR PAGO</b>\n\n👤 ' + seller.nombre + '\n📱 ' + seller.telefono + '\n💼 ' + plan.nombre + '\n📅 Venció: ' + expira.toLocaleDateString('es')).catch(() => {});
+          marcarEnviado('suspendido'); suspendidos++;
+        }
+
+        state.planNotifLog[seller.id] = log;
+      }
+
+      if (avisos > 0 || suspendidos > 0) {
+        app.log.info('[CRON-PLAN] Avisos: ' + avisos + ' | Suspendidos: ' + suspendidos);
+        await save();
+      }
+    } catch(e) {
+      app.log.error('[CRON-PLAN] ' + e.message);
+    }
+  }, { timezone: tz });
+}
+
+// ═══════════════════════════════════════════════════════
+// CRON: limpieza de Maps (previene memory leaks a 1 año)
+// ═══════════════════════════════════════════════════════
+let cronCleanMaps = null;
+function scheduleCleanMaps() {
+  if (cronCleanMaps) cronCleanMaps.stop();
+  cronCleanMaps = cron.schedule('0 * * * *', function() {
+    try {
+      const ahora = Date.now();
+      let limpiados = 0;
+
+      // rateLimitMap
+      for (const [k, v] of rateLimitMap.entries()) {
+        if (ahora > (v.resetAt || 0) + 300000) {
+          rateLimitMap.delete(k);
+          limpiados++;
+        }
+      }
+
+      // failMap
+      for (const [k, v] of failMap.entries()) {
+        if (ahora > (v.resetAt || 0)) {
+          failMap.delete(k);
+          limpiados++;
+        }
+      }
+
+      // state.loginAttempts
+      let loginLimpiados = 0;
+      for (const ip of Object.keys(state.loginAttempts || {})) {
+        const reg = state.loginAttempts[ip];
+        if (ahora > (reg.blockedUntil || 0) + 86400000) {
+          delete state.loginAttempts[ip];
+          loginLimpiados++;
+        }
+      }
+
+      if (limpiados > 0 || loginLimpiados > 0) {
+        app.log.info('[CLEAN-MAPS] rateLimit+fail: ' + limpiados + ' | loginAttempts: ' + loginLimpiados);
+      }
+    } catch(e) {
+      app.log.error('[CLEAN-MAPS] ' + e.message);
+    }
+  });
+}
+
 function scheduleDaily() {
   if (cronWeekly) cronWeekly.stop();
   if (cronDaily) cronDaily.stop();
@@ -2577,7 +2727,7 @@ app.get('/api/admin/sellers', async (req, reply) => {
 // ═══ HELPER: crear notificación in-app (guardada en state.notifications) ═══
 // Storage: state.notifications = [{ id, user_type, user_id, tipo, titulo, mensaje, accion_url, leida, created_at }]
 // Cap 500 global (LRU), 50 por seller visible
-function crearNotificacion({ user_type, user_id, tipo, titulo, mensaje, accion_url }) {
+function crearNotificacion({ user_type, user_id, tipo, titulo, mensaje, accion_url, metadata }) {
   try {
     if (!state.notifications) state.notifications = [];
     const notif = {
@@ -2588,6 +2738,7 @@ function crearNotificacion({ user_type, user_id, tipo, titulo, mensaje, accion_u
       titulo: String(titulo || '').slice(0, 100),
       mensaje: mensaje ? String(mensaje).slice(0, 1000) : null,
       accion_url: accion_url || null,
+      metadata: metadata || null,
       leida: false,
       created_at: new Date().toISOString()
     };
@@ -2883,6 +3034,60 @@ app.get('/api/admin/notifications', async (req, reply) => {
   return { ok: true, total: notifs.length, notifications: preview };
 });
 
+
+// ═══ ADMIN: renovar plan de un seller (extiende 30 días) ═══
+app.post('/api/admin/sellers/:id/renew', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+  try {
+    const { plan_id } = req.body || {};
+    if (!plan_id) { reply.code(400); return { ok: false, error: 'plan_id requerido' }; }
+
+    const plan = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(plan_id));
+    if (!plan) { reply.code(404); return { ok: false, error: 'Plan no existe' }; }
+
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(req.params.id));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Seller no existe' }; }
+
+    // Calcular nueva fecha: si ya tenía expiración futura, extender; si no, desde hoy
+    const ahora = Date.now();
+    const expiraActual = seller.plan_expira_at ? new Date(seller.plan_expira_at).getTime() : 0;
+    const base = expiraActual > ahora ? expiraActual : ahora;
+    const nuevaFecha = new Date(base + 30 * 24 * 3600 * 1000);
+
+    const updates = {
+      plan_id,
+      plan_expira_at: nuevaFecha.toISOString(),
+      estado: 'aprobado',
+      activo: true,
+      updated_at: new Date().toISOString()
+    };
+
+    const updated = await dbUpdate('sellers', req.params.id, updates);
+    if (!updated) { reply.code(500); return { ok: false, error: 'No se pudo actualizar' }; }
+
+    // Notificación
+    crearNotificacion({
+      user_type: 'seller',
+      user_id: req.params.id,
+      tipo: 'plan_renovado',
+      titulo: '✅ Plan renovado',
+      mensaje: 'Tu plan ' + plan.nombre + ' está activo hasta ' + nuevaFecha.toLocaleDateString('es') + '. ¡Gracias por confiar en Comdiaz!',
+      accion_url: 'seller-panel.html'
+    });
+
+    // Telegram al admin
+    notifyTelegram('💳 <b>PLAN RENOVADO</b>\n\n👤 ' + seller.nombre + '\n📱 ' + seller.telefono + '\n💼 ' + plan.nombre + '\n📅 Hasta: ' + nuevaFecha.toLocaleDateString('es')).catch(() => {});
+
+    return { ok: true, seller: { id: updated.id, plan_id: updated.plan_id, plan_expira_at: updated.plan_expira_at, estado: updated.estado } };
+  } catch(e) {
+    app.log.error('[RENEW-PLAN] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 // ═══ ADMIN: ver productos de un seller específico ═══
 app.get('/api/admin/sellers/:id/products', async (req, reply) => {
   const auth = requireAdmin(req);
@@ -2904,11 +3109,25 @@ app.post('/api/admin/sellers/:id/approve', async (req, reply) => {
   if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
   
   try {
-    const seller = await dbUpdate('sellers', req.params.id, {
+    // Resolver plan para saber si es pago
+    const sellerPre = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(req.params.id));
+    if (!sellerPre) { reply.code(404); return { ok: false, error: 'No encontrado' }; }
+    const plan = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(sellerPre.plan_id));
+    const planEsPago = plan && Number(plan.precio_usd) > 0;
+
+    const updates = {
       estado: 'aprobado',
       activo: true,
       updated_at: new Date().toISOString(),
-    });
+    };
+    // Si plan pago y sin expiración previa → 30 días desde hoy
+    if (planEsPago && !sellerPre.plan_expira_at) {
+      updates.plan_expira_at = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
+    }
+    // Si estaba suspendido_pago y no cambia plan → resetear a aprobado sin tocar expiración
+    // (el admin puede aprobar reactivación manual)
+
+    const seller = await dbUpdate('sellers', req.params.id, updates);
     if (!seller) { reply.code(404); return { ok: false, error: 'No encontrado' }; }
     
     notifyTelegram('✅ <b>VENDEDOR APROBADO</b>\n\n👤 ' + seller.nombre + '\n📱 ' + seller.telefono).catch(() => {});
@@ -6423,6 +6642,8 @@ cargarDesdeNube().then(() => {
   schedule();
   scheduleIA();
   scheduleDaily();
+  schedulePlanExpiry();
+  scheduleCleanMaps();
   setTimeout(autoSearchOnStart, 15000);  // 15s para dar margen a cargarDesdeNube
 });
 });

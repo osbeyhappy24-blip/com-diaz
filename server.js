@@ -3197,6 +3197,41 @@ app.post('/api/admin/reset-ratelimit', async (req, reply) => {
   }
 });
 
+
+// ═══ ADMIN: reactivar un producto específico de un seller ═══
+app.post('/api/admin/sellers/:id/products/:pid/reactivate', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+  try {
+    const prod = await dbSelectOne('seller_products', '?id=eq.' + encodeURIComponent(req.params.pid));
+    if (!prod) { reply.code(404); return { ok: false, error: 'Producto no existe' }; }
+    if (prod.seller_id !== req.params.id) {
+      reply.code(403); return { ok: false, error: 'El producto no pertenece a este seller' };
+    }
+
+    await dbUpdate('seller_products', req.params.pid, {
+      activo: true,
+      publicado: true,
+      updated_at: new Date().toISOString()
+    });
+
+    // Incrementar cuota_usada del seller
+    try {
+      const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(req.params.id));
+      if (seller) {
+        const nuevoUso = (Number(seller.cuota_usada) || 0) + 1;
+        await dbUpdate('sellers', seller.id, { cuota_usada: nuevoUso });
+      }
+    } catch(_) {}
+
+    return { ok: true, productId: req.params.pid, activo: true, publicado: true };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 // ═══ ADMIN: ver productos de un seller específico ═══
 app.get('/api/admin/sellers/:id/products', async (req, reply) => {
   const auth = requireAdmin(req);

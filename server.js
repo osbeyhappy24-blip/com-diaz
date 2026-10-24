@@ -3568,11 +3568,18 @@ app.put('/api/admin/payment-methods', async (req, reply) => {
 // ═══════════════════════════════════════════════════════
 
 // ── Helper: generar código único de referido ──
-function _generarReferralCode(nombre, telefono) {
+function _generarReferralCode(nombre, telefono, sellerId) {
   const base = (nombre || 'USER').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 5) || 'USER';
   const num = String(telefono || '').replace(/\D/g, '').slice(-4) || '0000';
-  const rnd = Math.random().toString(36).slice(2, 5).toUpperCase();
-  return base + num + rnd; // ej: OSBEY0267XYZ
+  // Hash DETERMINÍSTICO basado en sellerId (siempre el mismo para el mismo seller)
+  const sid = String(sellerId || '');
+  let hash = 0;
+  for (let i = 0; i < sid.length; i++) {
+    hash = ((hash << 5) - hash) + sid.charCodeAt(i);
+    hash = hash & hash; // Convert to 32bit int
+  }
+  const suffix = Math.abs(hash).toString(36).toUpperCase().padStart(3, '0').slice(0, 3);
+  return base + num + suffix; // ej: OSBEY0267A1B (siempre igual)
 }
 
 // ── Helper: obtener o crear registro de referidos del seller ──
@@ -3580,7 +3587,7 @@ function _getReferralRecord(sellerId, seller) {
   if (!state.referrals) state.referrals = {};
   if (!state.referrals[sellerId]) {
     state.referrals[sellerId] = {
-      code: seller ? _generarReferralCode(seller.nombre, seller.telefono) : ('REF' + Date.now()),
+      code: seller ? _generarReferralCode(seller.nombre, seller.telefono, seller.id) : ('REF' + Date.now()),
       referred_by: null,
       ref_count: 0,
       ref_bonus_quota: 0,

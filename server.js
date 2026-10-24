@@ -2742,6 +2742,72 @@ app.get('/api/admin/push-subs', async (req, reply) => {
   return { ok: true, total: subs.length, subs };
 });
 
+
+// ═══ ADMIN: probar envío de push con diagnóstico completo ═══
+app.post('/api/admin/push/test', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  const { sellerId } = req.body || {};
+  if (!sellerId) { reply.code(400); return { ok: false, error: 'sellerId requerido' }; }
+
+  const subs = (state.sellerSubscriptions || []).filter(s => s.sellerId === sellerId);
+  if (!subs.length) {
+    return { ok: false, error: 'Sin suscripciones para ' + sellerId, subs: 0 };
+  }
+
+  const resultados = [];
+  for (const sub of subs) {
+    const payload = JSON.stringify({
+      title: '🔔 Prueba de push',
+      body: 'Si ves esto en la barra, el push funciona 🎉',
+      icon: '/icon-shop-192.png',
+      badge: '/icon-shop-192.png',
+      vibrate: [200, 100, 200],
+      url: '/seller-panel.html#notif',
+      tag: 'comdiaz-test-' + Date.now()
+    });
+    try {
+      const res = await webpush.sendNotification(sub.subscription, payload, { TTL: 86400, urgency: 'high' });
+      resultados.push({
+        endpoint: sub.subscription.endpoint.slice(0, 60) + '...',
+        ok: true,
+        status: res.statusCode,
+        headers: res.headers ? Object.keys(res.headers) : []
+      });
+    } catch(e) {
+      resultados.push({
+        endpoint: sub.subscription.endpoint.slice(0, 60) + '...',
+        ok: false,
+        status: e.statusCode || 0,
+        error: e.message,
+        body: e.body ? String(e.body).slice(0, 300) : null,
+        code: e.code || null
+      });
+    }
+  }
+  return { ok: true, sellerId, subs: subs.length, resultados };
+});
+
+// ═══ ADMIN: ver notificaciones guardadas ═══
+app.get('/api/admin/notifications', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  const sellerId = req.query?.sellerId;
+  let notifs = state.notifications || [];
+  if (sellerId) notifs = notifs.filter(n => n.user_id === sellerId);
+  const preview = notifs.slice(-30).map(n => ({
+    id: n.id,
+    tipo: n.tipo,
+    titulo: n.titulo,
+    mensaje: n.mensaje ? n.mensaje.slice(0, 80) : null,
+    user_id: n.user_id,
+    user_type: n.user_type,
+    leida: n.leida,
+    created_at: n.created_at
+  }));
+  return { ok: true, total: notifs.length, notifications: preview };
+});
+
 // ═══ ADMIN: ver productos de un seller específico ═══
 app.get('/api/admin/sellers/:id/products', async (req, reply) => {
   const auth = requireAdmin(req);

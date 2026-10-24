@@ -3728,6 +3728,33 @@ app.get('/api/admin/referrals', async (req, reply) => {
   }
 });
 
+
+// ═══ ADMIN: ver código de referido de un seller (para debugging) ═══
+app.get('/api/admin/referral-code/:sellerId', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  try {
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(req.params.sellerId));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Seller no existe' }; }
+    const rec = _getReferralRecord(seller.id, seller);
+    await save();
+    return {
+      ok: true,
+      sellerId: seller.id,
+      nombre: seller.nombre,
+      code: rec.code,
+      link: 'https://com-diaz-web.onrender.com/seller.html?ref=' + rec.code,
+      ref_count: rec.ref_count || 0,
+      ref_bonus_quota: rec.ref_bonus_quota || 0,
+      referrals_made: rec.referrals_made || []
+    };
+  } catch(e) {
+    app.log.error('[REFERRAL-CODE] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 // ═══ ADMIN: reactivar un producto específico de un seller ═══
 app.post('/api/admin/sellers/:id/products/:pid/reactivate', async (req, reply) => {
   const auth = requireAdmin(req);

@@ -3295,7 +3295,26 @@ app.get('/api/admin/stats', async (req, reply) => {
     const pendientes = await dbCount('sellers', '?estado=eq.pendiente');
     const aprobados = await dbCount('sellers', '?estado=eq.aprobado');
     const suspendidos = await dbCount('sellers', '?estado=eq.suspendido');
-    const totalProductos = await dbCount('seller_products', '?activo=eq.true');
+    // ─── Productos MANUALES (mismo criterio que /api/public/local) ───
+    const manualesActivos = (state.productosManuales || []).filter(function(p) {
+      return p.publicado !== false && p.tipo === 'local' && p.activo !== false;
+    }).length;
+
+    // ─── Productos SELLERS (activos + publicados + seller aprobado) ───
+    let sellersActivos = 0;
+    try {
+      const raw = await dbSelect('seller_products',
+        '?activo=eq.true&publicado=eq.true&select=id,sellers!inner(estado,activo)');
+      sellersActivos = (raw || []).filter(function(p) {
+        return p.sellers && p.sellers.estado === 'aprobado' && p.sellers.activo !== false;
+      }).length;
+    } catch(_) {}
+
+    // ─── Suspendidos por pago (para desglose) ───
+    const suspendidosPago = await dbCount('sellers', '?estado=eq.suspendido_pago');
+
+    // ─── Total activos real ───
+    const totalProductos = manualesActivos + sellersActivos;
     const pagosPendientes = await dbCount('payments', '?estado=eq.pendiente');
     
     return {
@@ -3304,9 +3323,14 @@ app.get('/api/admin/stats', async (req, reply) => {
         pendientes,
         aprobados,
         suspendidos,
-        total: pendientes + aprobados + suspendidos,
+        suspendidos_pago: suspendidosPago,
+        total: pendientes + aprobados + suspendidos + suspendidosPago,
       },
-      productos: { totalActivos: totalProductos },
+      productos: {
+        totalActivos: totalProductos,
+        manuales: manualesActivos,
+        sellers: sellersActivos,
+      },
       pagos: { pendientes: pagosPendientes },
     };
   } catch(e) {

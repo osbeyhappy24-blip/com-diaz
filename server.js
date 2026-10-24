@@ -2728,6 +2728,20 @@ app.post('/api/seller/notifications/read-all', async (req, reply) => {
   }
 });
 
+
+app.get('/api/admin/push-subs', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  const subs = (state.sellerSubscriptions || []).map(function(s) {
+    return {
+      sellerId: s.sellerId,
+      endpointPreview: (s.subscription && s.subscription.endpoint ? s.subscription.endpoint : '').slice(0, 60) + '...',
+      created_at: s.created_at
+    };
+  });
+  return { ok: true, total: subs.length, subs };
+});
+
 // ═══ ADMIN: ver productos de un seller específico ═══
 app.get('/api/admin/sellers/:id/products', async (req, reply) => {
   const auth = requireAdmin(req);

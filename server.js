@@ -3062,7 +3062,9 @@ app.post('/api/admin/sellers/:id/renew', async (req, reply) => {
       plan_expira_at: nuevaFecha.toISOString(),
       estado: 'aprobado',
       activo: true,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      // Al renovar, limpiar notas de suspensión por pago
+      notas_internas: null
     };
 
     const updated = await dbUpdate('sellers', req.params.id, updates);
@@ -3179,7 +3181,7 @@ app.post('/api/admin/reset-ratelimit', async (req, reply) => {
   const key = String(req.headers['x-comdiaz-key'] || '');
   const expected = String(state.pin || '');
   const a = Buffer.from(key), b = Buffer.from(expected);
-  if (a.length !== b.length || !require('crypto').timingSafeEqual(a, b)) {
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
     reply.code(401); return { ok: false, error: 'No autorizado' };
   }
   try {

@@ -5477,23 +5477,100 @@ app.post('/api/unpublish-all', async () => {
 });
 
 // GET público: configuración del shop
-app.get('/api/public/config', async () => ({
-  ok: true,
-  config: {
-    titulo: state.shopConfig?.titulo || 'Comdiaz Shop',
-    subtitulo: state.shopConfig?.subtitulo || '',
-    whatsapp: state.shopConfig?.whatsapp || '',
-    horarioAtencion: state.shopConfig?.horarioAtencion || 'Lun-Sab 9:00am - 9:00pm',
-    maxProductos: state.shopConfig?.maxProductos || 200,
-    bannerActivo: state.shopConfig?.bannerActivo || false,
-    bannerTexto: state.shopConfig?.bannerTexto || '',
-    bannerColor: state.shopConfig?.bannerColor || 'gradient',
-    promociones: (state.shopConfig?.promociones || []).filter(p => p && p.activo !== false),
-    aiBanners: (state.shopConfig?.aiBanners || []).filter(p => p && p.activo !== false),
-    aiBannersUpdated: state.shopConfig?.aiBannersUpdated || null,
-    rotacionSeg: Number(state.shopConfig?.rotacionSeg) || 5,
-  },
-}));
+app.get('/api/public/config', async (req, reply) => {
+  try {
+    const cfg = state.shopConfig || {};
+
+    // Construir config con solo campos seguros (primitivos)
+    const promociones = (cfg.promociones || [])
+      .filter(p => p && typeof p === 'object' && p.activo !== false)
+      .map(p => ({
+        id: String(p.id || ''),
+        texto: String(p.texto || ''),
+        subtexto: p.subtexto ? String(p.subtexto) : null,
+        emoji: String(p.emoji || '✨'),
+        color: String(p.color || 'gradient'),
+        badge: p.badge ? String(p.badge) : null,
+        badgeColor: p.badgeColor ? String(p.badgeColor) : null,
+        filtro: String(p.filtro || 'all'),
+        orden: Number(p.orden) || 1,
+        activo: p.activo !== false
+      }));
+
+    const aiBanners = (cfg.aiBanners || [])
+      .filter(p => p && typeof p === 'object' && p.activo !== false)
+      .map(p => ({
+        id: String(p.id || ''),
+        texto: String(p.texto || ''),
+        emoji: String(p.emoji || '✨'),
+        color: String(p.color || 'gradient'),
+        activo: true
+      }));
+
+    const response = {
+      ok: true,
+      config: {
+        titulo: String(cfg.titulo || 'Comdiaz Shop'),
+        subtitulo: String(cfg.subtitulo || ''),
+        whatsapp: String(cfg.whatsapp || ''),
+        horarioAtencion: String(cfg.horarioAtencion || 'Lun-Sab 9:00am - 9:00pm'),
+        maxProductos: Number(cfg.maxProductos) || 200,
+        bannerActivo: !!cfg.bannerActivo,
+        bannerTexto: String(cfg.bannerTexto || ''),
+        bannerColor: String(cfg.bannerColor || 'gradient'),
+        promociones: promociones,
+        aiBanners: aiBanners,
+        aiBannersUpdated: cfg.aiBannersUpdated ? String(cfg.aiBannersUpdated) : null,
+        rotacionSeg: Number(cfg.rotacionSeg) || 5,
+      },
+    };
+
+    // Serializar manualmente (captura errores específicos)
+    let json;
+    try {
+      json = JSON.stringify(response);
+    } catch(serErr) {
+      app.log.error('[PUBLIC-CONFIG-SERIALIZE] ' + serErr.message);
+      reply.code(500);
+      return { ok: false, error: 'Serialization error: ' + serErr.message };
+    }
+
+    app.log.info('[PUBLIC-CONFIG] OK: ' + json.length + 'B, ' + promociones.length + ' promos, ' + aiBanners.length + ' AI');
+
+    // Enviar como string puro
+    reply.header('Content-Type', 'application/json; charset=utf-8');
+    reply.header('Cache-Control', 'no-store, no-cache, must-revalidate');
+    reply.header('Pragma', 'no-cache');
+    reply.send(json);
+  } catch(e) {
+    app.log.error('[PUBLIC-CONFIG] Error: ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+// ═══ DEBUG: endpoint simple para diagnosticar (temporal) ═══
+app.get('/api/public/config-debug', async (req, reply) => {
+  try {
+    const cfg = state.shopConfig || {};
+    return {
+      ok: true,
+      hasShopConfig: !!state.shopConfig,
+      tipoPromociones: Array.isArray(cfg.promociones) ? 'array' : typeof cfg.promociones,
+      numPromociones: Array.isArray(cfg.promociones) ? cfg.promociones.length : 0,
+      primeraPromo: Array.isArray(cfg.promociones) && cfg.promociones[0] ? Object.keys(cfg.promociones[0]) : null,
+      rotacionSeg: cfg.rotacionSeg,
+      tipos: {
+        rotacionSeg: typeof cfg.rotacionSeg,
+        promociones: typeof cfg.promociones,
+        aiBanners: typeof cfg.aiBanners
+      }
+    };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
 
 // POST con auth: actualizar config del shop
 app.post('/api/shop-config', async (req) => {

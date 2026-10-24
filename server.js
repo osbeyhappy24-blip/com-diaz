@@ -2299,6 +2299,25 @@ app.post('/api/seller/login', async (req, reply) => {
       reply.code(400); return { ok: false, error: 'Falta teléfono o contraseña' };
     }
     const tel = normalizarTelefono(telefono);
+
+    // ═══ RATE LIMIT: 5 intentos / 15 min por IP + teléfono ═══
+    {
+      const _ip = (req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown');
+      const _rlKey = 'login:' + _ip + ':' + tel;
+      const _ahora = Date.now();
+      const _entry = rateLimitMap.get(_rlKey) || { count: 0, resetAt: _ahora + 15 * 60 * 1000 };
+      if (_ahora > _entry.resetAt) {
+        _entry.count = 0;
+        _entry.resetAt = _ahora + 15 * 60 * 1000;
+      }
+      if (_entry.count >= 5) {
+        const _minsRestantes = Math.ceil((_entry.resetAt - _ahora) / 60000);
+        reply.code(429);
+        return { ok: false, error: 'Demasiados intentos. Espera ' + _minsRestantes + ' min.' };
+      }
+      _entry.count++;
+      rateLimitMap.set(_rlKey, _entry);
+    }
     const seller = await dbSelectOne('sellers', '?telefono=eq.' + encodeURIComponent(tel));
     if (!seller) {
       reply.code(401); return { ok: false, error: 'Credenciales inválidas' };

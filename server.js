@@ -3088,6 +3088,67 @@ app.post('/api/admin/sellers/:id/renew', async (req, reply) => {
   }
 });
 
+
+// ═══ SELLER: info del plan + días restantes + urgencia ═══
+app.get('/api/seller/plan-info', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+  try {
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(payload.sellerId));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Seller no existe' }; }
+    const plan = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(seller.plan_id));
+
+    let diasRestantes = null;
+    let estadoPago = 'sin_caducidad';
+    let urgencia = 'none';
+    let mensaje = '';
+    const planEsPago = plan && Number(plan.precio_usd) > 0;
+
+    if (planEsPago && seller.plan_expira_at) {
+      const expira = new Date(seller.plan_expira_at);
+      const msDiff = expira - new Date();
+      diasRestantes = Math.ceil(msDiff / (24 * 3600 * 1000));
+
+      if (diasRestantes > 7) {
+        estadoPago = 'activo'; urgencia = 'none';
+      } else if (diasRestantes > 3) {
+        estadoPago = 'por_vencer'; urgencia = 'info';
+        mensaje = 'Tu plan vence en ' + diasRestantes + ' días';
+      } else if (diasRestantes > 1) {
+        estadoPago = 'por_vencer'; urgencia = 'warn';
+        mensaje = 'Tu plan vence en ' + diasRestantes + ' días';
+      } else if (diasRestantes >= 0) {
+        estadoPago = 'por_vencer'; urgencia = 'critical';
+        mensaje = diasRestantes === 0 ? 'Tu plan vence hoy' : 'Tu plan vence mañana';
+      } else if (diasRestantes >= -1) {
+        estadoPago = 'gracia'; urgencia = 'critical';
+        mensaje = 'Tu plan venció. Tienes 24h para renovar.';
+      } else {
+        estadoPago = 'suspendido_pago'; urgencia = 'critical';
+        mensaje = 'Cuenta suspendida por falta de pago. Renueva para reactivar.';
+      }
+    } else if (seller.estado === 'suspendido_pago') {
+      estadoPago = 'suspendido_pago'; urgencia = 'critical';
+      mensaje = 'Cuenta suspendida por falta de pago.';
+    }
+
+    return {
+      ok: true,
+      plan: plan ? { id: plan.id, nombre: plan.nombre, precio_usd: plan.precio_usd, max_productos: plan.max_productos } : null,
+      plan_expira_at: seller.plan_expira_at,
+      estado: seller.estado,
+      diasRestantes,
+      estadoPago,
+      urgencia,
+      mensaje
+    };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 // ═══ ADMIN: ver productos de un seller específico ═══
 app.get('/api/admin/sellers/:id/products', async (req, reply) => {
   const auth = requireAdmin(req);

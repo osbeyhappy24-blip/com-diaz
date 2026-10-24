@@ -6426,3 +6426,4 @@ cargarDesdeNube().then(() => {
   setTimeout(autoSearchOnStart, 15000);  // 15s para dar margen a cargarDesdeNube
 });
 });
+

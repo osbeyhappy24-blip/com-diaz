@@ -3118,12 +3118,15 @@ app.get('/api/seller/plan-info', async (req, reply) => {
       } else if (diasRestantes > 1) {
         estadoPago = 'por_vencer'; urgencia = 'warn';
         mensaje = 'Tu plan vence en ' + diasRestantes + ' días';
-      } else if (diasRestantes >= 0) {
+      } else if (diasRestantes === 1) {
         estadoPago = 'por_vencer'; urgencia = 'critical';
-        mensaje = diasRestantes === 0 ? 'Tu plan vence hoy' : 'Tu plan vence mañana';
-      } else if (diasRestantes >= -1) {
+        mensaje = 'Tu plan vence mañana';
+      } else if (diasRestantes === 0) {
         estadoPago = 'gracia'; urgencia = 'critical';
-        mensaje = 'Tu plan venció. Tienes 24h para renovar.';
+        mensaje = 'Tu plan vence HOY. Tienes 24h para renovar.';
+      } else if (diasRestantes === -1) {
+        estadoPago = 'gracia'; urgencia = 'critical';
+        mensaje = 'Tu plan venció AYER. Últimas horas para renovar.';
       } else {
         estadoPago = 'suspendido_pago'; urgencia = 'critical';
         mensaje = 'Cuenta suspendida por falta de pago. Renueva para reactivar.';

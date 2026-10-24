@@ -50,7 +50,7 @@ const BRAND = `
         Automatización de compras · v0.1
 `;
 
-const app = Fastify({ logger: true });
+const app = Fastify({ logger: true, bodyLimit: 5242880 }); // 5MB (antes 1MB default, bloqueaba fotos grandes)
 
 // ─── Apify client (Temu scraper) ───
 let APIFY_TOKEN = process.env.APIFY_TOKEN || '';

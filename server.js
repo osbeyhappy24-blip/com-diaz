@@ -299,7 +299,10 @@ const DEFAULTS = {
   loginAttempts: {}, // IP -> { count, blockedUntil }
   activityLog: [], // ultimos eventos
   subscriptions: [],
-  sellerSubscriptions: [],  // Push subs de vendedores // Web Push: suscripciones vinculadas a pedidos
+  sellerSubscriptions: [],  // Push subs de vendedores
+  notifications: [],        // FIX: notificaciones in-app (antes no estaba en DEFAULTS)
+  aiUsageCounters: null,    // FIX: se inicializa en línea 3663
+  // Web Push: suscripciones vinculadas a pedidos
   tesoreria: {
     movimientos: []  // lista de ingresos/egresos
   },
@@ -358,7 +361,20 @@ const state = fs.existsSync(DB_FILE)
   ? { ...DEFAULTS, ...JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) }
   : structuredClone(DEFAULTS);
 
-const save = async () => { await guardarEnNube(); };
+// ═══ FIX: queue serial para evitar que dos saves compitan ═══
+let _saveQueue = Promise.resolve();
+let _saveInFlight = 0;
+const save = () => {
+  _saveInFlight++;
+  _saveQueue = _saveQueue
+    .then(() => guardarEnNube())
+    .then(() => { _saveInFlight--; })
+    .catch(e => {
+      _saveInFlight--;
+      console.error('[SAVE-QUEUE] ' + e.message);
+    });
+  return _saveQueue;
+};
 
 const adapters = {
   async searchFrom(sourceId, query, sourceState) {
@@ -675,6 +691,13 @@ async function cargarDesdeNube() {
         app.log.info('Merge ' + remoto.results.length + ' desde JSONBin -> total ' + state.results.length);
       }
       if (remoto.visits) state.visits = remoto.visits;
+      // ═══ FIX: cargar campos críticos que antes se perdían ═══
+      if (remoto.sellerSubscriptions) state.sellerSubscriptions = remoto.sellerSubscriptions;
+      if (remoto.notifications) state.notifications = remoto.notifications;
+      if (remoto.aiUsageCounters) state.aiUsageCounters = remoto.aiUsageCounters;
+      if (remoto.shopStats) state.shopStats = remoto.shopStats;
+      if (remoto.deletedHistory) state.deletedHistory = remoto.deletedHistory;
+      if (remoto.sre) state.sre = remoto.sre;
       app.log.info("Config cargada desde JSONBin");
       
       // ═══ FUSIÓN AUTOMÁTICA DE LOCALES DESDE BACKUP ═══
@@ -818,6 +841,21 @@ async function guardarEnNube() {
         byDay: state.visits?.byDay || {},
         byProduct: state.visits?.byProduct || {}
       },
+      // ═══ FIX: persistir campos críticos que antes se perdían ═══
+      sellerSubscriptions: (state.sellerSubscriptions || []).slice(-500),
+      notifications: (state.notifications || []).slice(-500),
+      aiUsageCounters: state.aiUsageCounters || null,
+      shopStats: state.shopStats || null,
+      deletedHistory: (state.deletedHistory || []).slice(-500),
+      sre: state.sre ? {
+        snapshots: (state.sre.snapshots || []).slice(-20),
+        alerts: (state.sre.alerts || []).slice(-50),
+        lastCheck: state.sre.lastCheck,
+        lastSnapshot: state.sre.lastSnapshot,
+        pausedCrons: state.sre.pausedCrons || {},
+        telegramChatId: state.sre.telegramChatId || null,
+        telegramEnabled: state.sre.telegramEnabled || false,
+      } : null,
     };
     const result = await guardarEstado(esencia);
     if (result && result.binId) {

@@ -2297,14 +2297,36 @@ app.post('/api/seller/register', async (req, reply) => {
     // Buscar referente si el código es válido
     let referenteId = null;
     if (referred_by_code) {
+      const codigoBuscado = String(referred_by_code).toUpperCase().trim();
       try {
-        for (const sid of Object.keys(state.referrals)) {
-          if (state.referrals[sid].code === String(referred_by_code).toUpperCase()) {
+        // 1. Buscar en state.referrals (rápido)
+        for (const sid of Object.keys(state.referrals || {})) {
+          if (state.referrals[sid].code === codigoBuscado) {
             referenteId = sid;
             break;
           }
         }
-      } catch(_) {}
+        
+        // 2. Si no se encontró, buscar en TODOS los sellers
+        if (!referenteId) {
+          const todos = await dbSelect('sellers', '?select=id,nombre,telefono');
+          for (const sl of (todos || [])) {
+            const rec = _getReferralRecord(sl.id, sl);
+            if (rec.code === codigoBuscado) {
+              referenteId = sl.id;
+              break;
+            }
+          }
+        }
+        
+        if (referenteId) {
+          app.log.info('[REFERRAL-REGISTER] Referente encontrado: ' + referenteId);
+        } else {
+          app.log.warn('[REFERRAL-REGISTER] Codigo no encontrado: ' + codigoBuscado);
+        }
+      } catch(e) {
+        app.log.error('[REFERRAL-REGISTER] ' + e.message);
+      }
     }
 
     const nuevo = await dbInsert('sellers', {

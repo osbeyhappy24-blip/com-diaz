@@ -3149,6 +3149,25 @@ app.get('/api/seller/plan-info', async (req, reply) => {
   }
 });
 
+
+// ═══ ADMIN: forzar expiración (SOLO TEST) ═══
+app.post('/api/admin/sellers/:id/force-expiry', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  const { dias } = req.body || {};
+  const offset = Number(dias);
+  if (isNaN(offset)) { reply.code(400); return { ok: false, error: 'dias requerido (número)' }; }
+
+  try {
+    const nuevaFecha = new Date(Date.now() + offset * 24 * 3600 * 1000).toISOString();
+    await dbUpdate('sellers', req.params.id, { plan_expira_at: nuevaFecha });
+    return { ok: true, plan_expira_at: nuevaFecha, offsetDias: offset };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 // ═══ ADMIN: ver productos de un seller específico ═══
 app.get('/api/admin/sellers/:id/products', async (req, reply) => {
   const auth = requireAdmin(req);

@@ -2781,6 +2781,43 @@ app.get('/api/admin/push-subs', async (req, reply) => {
 });
 
 
+
+// ═══ ADMIN: test push con formato alternativo (como sendPushToOrder) ═══
+app.post('/api/admin/push/test-alt', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  const { sellerId } = req.body || {};
+  if (!sellerId) { reply.code(400); return { ok: false, error: 'sellerId requerido' }; }
+
+  const subs = (state.sellerSubscriptions || []).filter(s => s.sellerId === sellerId);
+  if (!subs.length) return { ok: false, error: 'Sin subs', subs: 0 };
+
+  const resultados = [];
+  for (const sub of subs) {
+    // Formato DIFERENTE: usa campo 'titulo' en vez de 'title'
+    const payload = JSON.stringify({
+      titulo: '🔔 Test ALT',
+      mensaje: 'Si ves esto, el SW espera titulo/mensaje',
+      title: '🔔 Test ALT',
+      body: 'Si ves esto, el SW espera title/body',
+      icon: '/icon-shop-192.png',
+      badge: '/icon-shop-192.png',
+      url: '/seller-panel.html#notif',
+      tag: 'comdiaz-test-alt-' + Date.now(),
+      vibrate: [200, 100, 200],
+      renotify: true,
+      requireInteraction: false,
+      silent: false
+    });
+    try {
+      const res = await webpush.sendNotification(sub.subscription, payload, { TTL: 86400, urgency: 'high' });
+      resultados.push({ ok: true, status: res.statusCode });
+    } catch(e) {
+      resultados.push({ ok: false, status: e.statusCode || 0, error: e.message });
+    }
+  }
+  return { ok: true, resultados };
+});
 // ═══ ADMIN: probar envío de push con diagnóstico completo ═══
 app.post('/api/admin/push/test', async (req, reply) => {
   const auth = requireAdmin(req);

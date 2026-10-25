@@ -17,7 +17,7 @@ import { ApifyClient } from 'apify-client';
 import { initApify, isApifyReady, searchSource, buildProductsForShop, SOURCES_CONFIG } from './import.js';
 import webpush from 'web-push';
 
-import { dbSelect, dbSelectOne, dbInsert, dbUpdate, dbCount, dbHealth } from './supabase.js';
+import { dbSelect, dbSelectOne, dbInsert, dbUpdate, dbDelete, dbCount, dbHealth } from './supabase.js';
 import { hashPassword, verifyPassword, createJWT, verifyJWT, getTokenFromRequest, requireSeller, requireAdmin, validarTelefono, normalizarTelefono } from './auth.js';
 
 // Cargar claves VAPID desde .vapid-keys.txt
@@ -4006,6 +4006,78 @@ app.put('/api/admin/shop/promociones', async (req, reply) => {
     await save();
     return { ok: true, total: normalizadas.length, rotacionSeg: state.shopConfig.rotacionSeg };
   } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+
+// ═══ ADMIN: eliminar seller (HARD DELETE) ═══
+app.delete('/api/admin/sellers/:id', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+  try {
+    const sellerId = req.params.id;
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(sellerId));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Seller no existe' }; }
+
+    const resultados = { productos: 0, notificaciones: 0, pushSubs: 0, referral: false, seller: false };
+
+    // 1. Marcar productos como inactivos (soft delete para no romper FK)
+    try {
+      const prods = await dbSelect('seller_products', '?seller_id=eq.' + encodeURIComponent(sellerId) + '&select=id');
+      for (const p of (prods || [])) {
+        await dbUpdate('seller_products', p.id, { activo: false, publicado: false });
+        resultados.productos++;
+      }
+    } catch(e) { app.log.warn('[DELETE-SELLER] products: ' + e.message); }
+
+    // 2. Limpiar state.referrals
+    if (state.referrals && state.referrals[sellerId]) {
+      delete state.referrals[sellerId];
+      resultados.referral = true;
+    }
+    // También limpiar referred_by de otros que lo tuvieran
+    if (state.referrals) {
+      for (const sid of Object.keys(state.referrals)) {
+        if (state.referrals[sid].referred_by === sellerId) {
+          state.referrals[sid].referred_by = null;
+        }
+      }
+    }
+
+    // 3. Limpiar notificaciones del seller
+    if (state.notifications) {
+      const antes = state.notifications.length;
+      state.notifications = state.notifications.filter(n => n.user_id !== sellerId);
+      resultados.notificaciones = antes - state.notifications.length;
+    }
+
+    // 4. Limpiar suscripciones push
+    if (state.sellerSubscriptions) {
+      const antes = state.sellerSubscriptions.length;
+      state.sellerSubscriptions = state.sellerSubscriptions.filter(s => s.sellerId !== sellerId);
+      resultados.pushSubs = antes - state.sellerSubscriptions.length;
+    }
+
+    // 5. Eliminar el seller de Supabase
+    try {
+      await dbDelete('sellers', '?id=eq.' + encodeURIComponent(sellerId));
+      resultados.seller = true;
+    } catch(e) {
+      app.log.error('[DELETE-SELLER] DB: ' + e.message);
+      reply.code(500);
+      return { ok: false, error: 'No se pudo eliminar el seller de DB: ' + e.message };
+    }
+
+    await save();
+
+    notifyTelegram('🗑️ <b>SELLER ELIMINADO</b>\n\n👤 ' + seller.nombre + '\n📱 ' + seller.telefono + '\n\nProductos: ' + resultados.productos + '\nNotifs: ' + resultados.notificaciones).catch(() => {});
+
+    return { ok: true, sellerId, eliminado: seller.nombre, resultados };
+  } catch(e) {
+    app.log.error('[DELETE-SELLER] ' + e.message);
     reply.code(500);
     return { ok: false, error: e.message };
   }

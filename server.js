@@ -2556,6 +2556,7 @@ app.get('/api/home', async () => {
 app.post('/api/seller/products', async (req, reply) => {
   try {
     const payload = requireSeller(req);
+    _invalidarLocalCache();
     if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
     
     const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(payload.sellerId));
@@ -2929,6 +2930,33 @@ function crearNotificacion({ user_type, user_id, tipo, titulo, mensaje, accion_u
   }
 }
 
+
+// ═══ CIRCUIT BREAKER: imgbb ═══
+const _imgbbCircuit = {
+  failures: 0,
+  openUntil: 0,
+  threshold: 5,      // abrir tras 5 fallos
+  cooldown: 60000    // 60s de cooldown
+};
+function _checkImgbbCircuit() {
+  if (Date.now() < _imgbbCircuit.openUntil) {
+    const segsRestantes = Math.ceil((_imgbbCircuit.openUntil - Date.now()) / 1000);
+    throw new Error('Servicio de imágenes temporalmente no disponible. Reintenta en ' + segsRestantes + 's.');
+  }
+}
+function _registrarFalloImgbb() {
+  _imgbbCircuit.failures++;
+  if (_imgbbCircuit.failures >= _imgbbCircuit.threshold) {
+    _imgbbCircuit.openUntil = Date.now() + _imgbbCircuit.cooldown;
+    app.log.warn('[CIRCUIT-BREAKER] imgbb abierto por 60s tras ' + _imgbbCircuit.failures + ' fallos');
+    _imgbbCircuit.failures = 0;
+  }
+}
+function _registrarExitoImgbb() {
+  _imgbbCircuit.failures = 0;
+  _imgbbCircuit.openUntil = 0;
+}
+
 // ═══ Push: enviar notificación al dispositivo del seller ═══
 async function enviarPushSeller(sellerId, notif) {
   const subs = (state.sellerSubscriptions || []).filter(function(s) {
@@ -2991,6 +3019,29 @@ app.post('/api/seller/push/subscribe', async (req, reply) => {
       state.sellerSubscriptions = state.sellerSubscriptions.slice(-500);
     }
     await save();
+
+      // ── Notificar al referente INMEDIATAMENTE ──
+      if (referenteId) {
+        try {
+          const referenteData = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(referenteId) + '&select=id,nombre');
+          const nombreReferente = referenteData ? referenteData.nombre : 'vendedor';
+
+          crearNotificacion({
+            user_type: 'seller',
+            user_id: referenteId,
+            tipo: 'referral_registered',
+            titulo: '🆕 Nuevo referido registrado',
+            mensaje: (String(nombre).trim() || 'Alguien') + ' se registró con tu link. Cuando el admin lo apruebe, recibirás +5 productos extra.',
+            accion_url: 'seller-panel.html'
+          });
+          app.log.info('[REFERRAL-NOTIF-REGISTERED] Notificado a ' + referenteId);
+
+          notifyTelegram('🆕 <b>NUEVO REFERIDO REGISTRADO</b>\n\n👤 Referente: ' + nombreReferente + '\n🎉 Nuevo: ' + nombre + '\n📱 ' + tel + '\n\n⏳ Pendiente de aprobación').catch(() => {});
+        } catch(e) {
+          app.log.error('[REFERRAL-NOTIF-REGISTERED] ' + e.message);
+        }
+      }
+
     return { ok: true, total: state.sellerSubscriptions.length };
   } catch(e) {
     reply.code(500);
@@ -5976,14 +6027,24 @@ app.post('/api/upload-image', async (req, reply) => {
     try { const sp = requireSeller(req); if (sp && sp.sellerId) sellerId = sp.sellerId; } catch(_) {}
     try { const ap = requireAdmin(req); if (ap) esAdmin = true; } catch(_) {}
 
-    // Rate limit: por sellerId si autenticado, por IP si anonimo
+    // Rate limit ADAPTATIVO: por sellerId según plan
     let rateKey, limit;
     if (sellerId) {
       rateKey = 'seller:' + sellerId + ':upload';
-      limit = 30;
+      try {
+        const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(sellerId) + '&select=plan_id');
+        const plan = seller ? await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(seller.plan_id)) : null;
+        const planId = plan ? plan.id : 'basico';
+        if (planId === 'premium') limit = 80;
+        else if (planId === 'pro') limit = 40;
+        else limit = 20;
+        app.log.info('[UPLOAD-RATE] ' + sellerId.slice(0,8) + ' plan=' + planId + ' limit=' + limit);
+      } catch(_) {
+        limit = 20;  // default basico
+      }
     } else if (esAdmin) {
       rateKey = 'admin:upload';
-      limit = 60;
+      limit = 120;
     } else {
       const ip = req.headers['cf-connecting-ip'] ||
                  req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
@@ -7564,8 +7625,20 @@ app.get('/api/featured', async () => ({
 }));
 
 // ═══ PÚBLICO: catálogo de productos locales ═══
+
+// ═══ CACHÉ: /api/public/local (30s) ═══
+let _localCache = { data: null, expiresAt: 0 };
+function _invalidarLocalCache() {
+  _localCache = { data: null, expiresAt: 0 };
+}
+
 app.get('/api/public/local', async (req) => {
+  // Verificar caché si no hay filtros
   const q = req.query || {};
+  const hasFilters = q.provincia || q.municipio || q.categoria || q.estado || q.buscar;
+  if (!hasFilters && _localCache.data && Date.now() < _localCache.expiresAt) {
+    return _localCache.data;
+  }
   let lista = (state.productosManuales || []).filter(p =>
     p.publicado !== false && p.tipo === 'local' && p.activo !== false
   );
@@ -7643,11 +7716,18 @@ app.get('/api/public/local', async (req) => {
 
   const todos = proyeccion.concat(sellerFiltrado);
 
-  return {
+  const response = {
     ok: true,
     total: todos.length,
     productos: todos,
   };
+
+  // Guardar en caché si no hay filtros
+  if (!hasFilters) {
+    _localCache = { data: response, expiresAt: Date.now() + 30000 };
+  }
+
+  return response;
 });
 
 // ═══ PÚBLICO: filtros disponibles para locales ═══

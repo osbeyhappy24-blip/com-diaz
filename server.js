@@ -2402,6 +2402,42 @@ app.post('/api/seller/register', async (req, reply) => {
       activo: true,
       cuota_usada: 0,
     });
+
+    // ── Crear referral record + notificar al referente ──
+    if (nuevo && nuevo.id) {
+      if (!state.referrals) state.referrals = {};
+      state.referrals[nuevo.id] = {
+        code: _generarReferralCode(nombre, tel, nuevo.id),
+        referred_by: referenteId || null,
+        referred_by_code: referred_by_code ? String(referred_by_code).toUpperCase().trim() : null,
+        ref_count: 0,
+        ref_bonus_quota: 0,
+        ref_last_reset: new Date().toISOString().slice(0, 10),
+        referrals_made: []
+      };
+      await save();
+
+      // Notificar al referente INMEDIATAMENTE
+      if (referenteId) {
+        try {
+          const refData = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(referenteId) + '&select=id,nombre');
+          const refNombre = refData ? refData.nombre : 'vendedor';
+          crearNotificacion({
+            user_type: 'seller',
+            user_id: referenteId,
+            tipo: 'referral_registered',
+            titulo: '🆕 Nuevo referido registrado',
+            mensaje: (String(nombre).trim() || 'Alguien') + ' se registró con tu link. Cuando el admin lo apruebe, recibirás +5 productos extra.',
+            accion_url: 'seller-panel.html'
+          });
+          app.log.info('[REFERRAL-NOTIF-REGISTERED] Notificado a ' + referenteId);
+          notifyTelegram('Nuevo referido: ' + nombre + ' (' + tel + ') → referente: ' + refNombre).catch(() => {});
+        } catch(e) {
+          app.log.error('[REFERRAL-NOTIF-REGISTERED] ' + e.message);
+        }
+      }
+    }
+
     
     notifyTelegram(
       '🏪 <b>NUEVO VENDEDOR</b>\n\n' +
@@ -3020,27 +3056,8 @@ app.post('/api/seller/push/subscribe', async (req, reply) => {
     }
     await save();
 
-      // ── Notificar al referente INMEDIATAMENTE ──
-      if (referenteId) {
-        try {
-          const referenteData = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(referenteId) + '&select=id,nombre');
-          const nombreReferente = referenteData ? referenteData.nombre : 'vendedor';
+    
 
-          crearNotificacion({
-            user_type: 'seller',
-            user_id: referenteId,
-            tipo: 'referral_registered',
-            titulo: '🆕 Nuevo referido registrado',
-            mensaje: (String(nombre).trim() || 'Alguien') + ' se registró con tu link. Cuando el admin lo apruebe, recibirás +5 productos extra.',
-            accion_url: 'seller-panel.html'
-          });
-          app.log.info('[REFERRAL-NOTIF-REGISTERED] Notificado a ' + referenteId);
-
-          notifyTelegram('🆕 <b>NUEVO REFERIDO REGISTRADO</b>\n\n👤 Referente: ' + nombreReferente + '\n🎉 Nuevo: ' + nombre + '\n📱 ' + tel + '\n\n⏳ Pendiente de aprobación').catch(() => {});
-        } catch(e) {
-          app.log.error('[REFERRAL-NOTIF-REGISTERED] ' + e.message);
-        }
-      }
 
     return { ok: true, total: state.sellerSubscriptions.length };
   } catch(e) {

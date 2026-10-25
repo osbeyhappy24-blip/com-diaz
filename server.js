@@ -4024,7 +4024,7 @@ app.delete('/api/admin/sellers/:id', async (req, reply) => {
 
     const resultados = { productos: 0, notificaciones: 0, pushSubs: 0, referral: false, seller: false };
 
-    // 1. Marcar productos como inactivos (soft delete para no romper FK)
+    // 1. Marcar productos como inactivos + estado 'eliminado'
     try {
       const prods = await dbSelect('seller_products', '?seller_id=eq.' + encodeURIComponent(sellerId) + '&select=id');
       for (const p of (prods || [])) {
@@ -4061,21 +4061,29 @@ app.delete('/api/admin/sellers/:id', async (req, reply) => {
       resultados.pushSubs = antes - state.sellerSubscriptions.length;
     }
 
-    // 5. Eliminar el seller de Supabase
+    // 5. SOFT DELETE del seller: cambiar estado a 'eliminado' y teléfono a eliminado_<id>
+    //    (evita conflictos de unique constraint en telefono si se registra de nuevo)
+    const telOriginal = seller.telefono;
+    const telLiberado = 'del_' + Date.now() + '_' + String(telOriginal).slice(-4);
     try {
-      await dbDelete('sellers', '?id=eq.' + encodeURIComponent(sellerId));
+      await dbUpdate('sellers', sellerId, {
+        estado: 'eliminado',
+        activo: false,
+        telefono: telLiberado,
+        notas_internas: (seller.notas_internas ? seller.notas_internas + ' | ' : '') + 'Eliminado el ' + new Date().toISOString().slice(0,10) + ' (tel original: ' + telOriginal + ')'
+      });
       resultados.seller = true;
     } catch(e) {
       app.log.error('[DELETE-SELLER] DB: ' + e.message);
       reply.code(500);
-      return { ok: false, error: 'No se pudo eliminar el seller de DB: ' + e.message };
+      return { ok: false, error: 'No se pudo eliminar el seller: ' + e.message };
     }
 
     await save();
 
-    notifyTelegram('🗑️ <b>SELLER ELIMINADO</b>\n\n👤 ' + seller.nombre + '\n📱 ' + seller.telefono + '\n\nProductos: ' + resultados.productos + '\nNotifs: ' + resultados.notificaciones).catch(() => {});
+    notifyTelegram('🗑️ <b>SELLER ELIMINADO</b>\n\n👤 ' + seller.nombre + '\n📱 ' + telOriginal + '\n\nProductos: ' + resultados.productos + '\nNotifs: ' + resultados.notificaciones + '\nTel liberado: ' + telLiberado).catch(() => {});
 
-    return { ok: true, sellerId, eliminado: seller.nombre, resultados };
+    return { ok: true, sellerId, eliminado: seller.nombre, telLiberado, resultados };
   } catch(e) {
     app.log.error('[DELETE-SELLER] ' + e.message);
     reply.code(500);

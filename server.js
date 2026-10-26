@@ -4244,7 +4244,7 @@ async function calcularStatsBanner() {
     
     return {
       totalProductos,
-      productosLocales: manuales.length,
+      productosLocales: manuales.length + sellerProds.length,  // sellers = locales
       productosSellers: sellerProds.length,
       vendedoresAprobados,
       precioMin: precioMin ? Math.round(precioMin * 100) / 100 : null,
@@ -4270,7 +4270,7 @@ app.get('/api/public/banners-real', async () => {
       banners.push({
         id: 'real-1',
         texto: stats.totalProductos + ' productos disponibles',
-        subtexto: stats.productosLocales + ' cubanos + ' + stats.productosSellers + ' importados',
+        subtexto: stats.productosLocales + ' productos cubanos',
         emoji: '📦',
         color: 'gradient',
         badge: 'LIVE',
@@ -4280,20 +4280,8 @@ app.get('/api/public/banners-real', async () => {
       });
     }
     
-    // 2. Vendedores verificados
-    if (stats.vendedoresAprobados > 0) {
-      banners.push({
-        id: 'real-2',
-        texto: stats.vendedoresAprobados + ' vendedor' + (stats.vendedoresAprobados !== 1 ? 'es' : '') + ' verificado' + (stats.vendedoresAprobados !== 1 ? 's' : ''),
-        subtexto: 'Compra con confianza',
-        emoji: '✅',
-        color: 'blue',
-        badge: 'VERIFIED',
-        badgeColor: 'new',
-        filtro: 'seller',
-        activo: true
-      });
-    }
+    // 2. (OCULTO temporalmente) Vendedores verificados
+    // Se reactivará cuando haya promoción/monetización
     
     // 3. Precio mínimo real
     if (stats.precioMin) {

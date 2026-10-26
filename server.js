@@ -4200,6 +4200,149 @@ app.post('/api/admin/automation/cap-check', async (req, reply) => {
   };
 });
 
+
+// ═══ FIX: Stats REALES para banners dinámicos ═══
+async function calcularStatsBanner() {
+  try {
+    // Productos manuales activos
+    const manuales = (state.productosManuales || []).filter(p =>
+      p.publicado !== false && p.tipo === 'local' && p.activo !== false
+    );
+    
+    // Productos de sellers aprobados
+    let sellerProds = [];
+    try {
+      const raw = await dbSelect('seller_products',
+        '?activo=eq.true&publicado=eq.true&select=id,titulo,precio_usd,seller_id,sellers!inner(estado,activo)');
+      sellerProds = (raw || []).filter(p =>
+        p.sellers && p.sellers.estado === 'aprobado' && p.sellers.activo !== false
+      );
+    } catch(_) {}
+    
+    // Vendedores aprobados
+    let vendedoresAprobados = 0;
+    try {
+      vendedoresAprobados = await dbCount('sellers', '?estado=eq.aprobado');
+    } catch(_) {}
+    
+    // Precio mínimo (manuales + sellers)
+    const precios = [
+      ...manuales.map(p => Number(p.salePrice)).filter(n => n > 0),
+      ...sellerProds.map(p => Number(p.precio_usd)).filter(n => n > 0)
+    ];
+    const precioMin = precios.length > 0 ? Math.min(...precios) : null;
+    
+    // Productos nuevos esta semana
+    const hace7dias = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+    const nuevosSemana = [
+      ...manuales.filter(p => p.createdAt && p.createdAt > hace7dias),
+      ...sellerProds.filter(p => p.created_at && p.created_at > hace7dias)
+    ].length;
+    
+    // Total productos
+    const totalProductos = manuales.length + sellerProds.length;
+    
+    return {
+      totalProductos,
+      productosLocales: manuales.length,
+      productosSellers: sellerProds.length,
+      vendedoresAprobados,
+      precioMin: precioMin ? Math.round(precioMin * 100) / 100 : null,
+      nuevosSemana
+    };
+  } catch(e) {
+    app.log.error('[BANNER-STATS] ' + e.message);
+    return null;
+  }
+}
+
+
+// ═══ PÚBLICO: banners dinámicos basados en datos reales ═══
+app.get('/api/public/banners-real', async () => {
+  try {
+    const stats = await calcularStatsBanner();
+    if (!stats) return { ok: false, banners: [] };
+    
+    const banners = [];
+    
+    // 1. Total productos disponibles
+    if (stats.totalProductos > 0) {
+      banners.push({
+        id: 'real-1',
+        texto: stats.totalProductos + ' productos disponibles',
+        subtexto: stats.productosLocales + ' cubanos + ' + stats.productosSellers + ' importados',
+        emoji: '📦',
+        color: 'gradient',
+        badge: 'LIVE',
+        badgeColor: 'new',
+        filtro: 'all',
+        activo: true
+      });
+    }
+    
+    // 2. Vendedores verificados
+    if (stats.vendedoresAprobados > 0) {
+      banners.push({
+        id: 'real-2',
+        texto: stats.vendedoresAprobados + ' vendedor' + (stats.vendedoresAprobados !== 1 ? 'es' : '') + ' verificado' + (stats.vendedoresAprobados !== 1 ? 's' : ''),
+        subtexto: 'Compra con confianza',
+        emoji: '✅',
+        color: 'blue',
+        badge: 'VERIFIED',
+        badgeColor: 'new',
+        filtro: 'seller',
+        activo: true
+      });
+    }
+    
+    // 3. Precio mínimo real
+    if (stats.precioMin) {
+      banners.push({
+        id: 'real-3',
+        texto: 'Desde $' + stats.precioMin.toFixed(2) + ' USD',
+        subtexto: 'Encuentra ofertas reales',
+        emoji: '💰',
+        color: 'yellow',
+        badge: 'SALE',
+        badgeColor: 'sale',
+        filtro: 'all',
+        activo: true
+      });
+    }
+    
+    // 4. Productos cubanos (siempre)
+    banners.push({
+      id: 'real-4',
+      texto: 'Productos cubanos auténticos',
+      subtexto: 'Directo de vendedores locales',
+      emoji: '🇨🇺',
+      color: 'purple',
+      badge: 'LOCAL',
+      badgeColor: 'limited',
+      filtro: 'local',
+      activo: true
+    });
+    
+    // 5. Sin comisiones (siempre VERDAD)
+    banners.push({
+      id: 'real-5',
+      texto: 'Compra directo por WhatsApp',
+      subtexto: 'Sin comisiones ocultas',
+      emoji: '💬',
+      color: 'green',
+      badge: 'FREE',
+      badgeColor: 'free',
+      filtro: 'all',
+      activo: true
+    });
+    
+    return { ok: true, banners, stats };
+  } catch(e) {
+    app.log.error('[BANNERS-REAL] ' + e.message);
+    return { ok: false, error: e.message, banners: [] };
+  }
+});
+
 // ═══ ADMIN: reactivar un producto específico de un seller ═══
 app.post('/api/admin/sellers/:id/products/:pid/reactivate', async (req, reply) => {
   const auth = requireAdmin(req);

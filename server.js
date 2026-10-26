@@ -1046,6 +1046,12 @@ function diasSinVer(p) {
 
 // ═══ MERGE de productos preservando IA ═══
 function mergeProducts(existentes, nuevos) {
+  // Si ya está en el cap, rechazar todos los nuevos
+  const activosActuales = (existentes || []).filter(p => p.activo !== false).length;
+  if (activosActuales >= CATALOG_CAP) {
+    console.log('[MERGE] Cap alcanzado (' + activosActuales + '/' + CATALOG_CAP + '). Ignorando ' + (nuevos || []).length + ' nuevos.');
+    return existentes || [];
+  }
   const hoy = new Date().toISOString().slice(0, 10);
   const map = new Map((existentes || []).map(p => [p.id, p]));
   let nuevosCount = 0, actCount = 0, iaPreservada = 0;
@@ -1949,6 +1955,65 @@ async function cleanupProductos() {
   return marcadosInactivos;
 }
 
+
+// ═══ FIX: Purga defensiva si el catálogo excede el cap ═══
+async function purgaDefensivaCap() {
+  try {
+    const activos = (state.results || []).filter(r => r.activo !== false);
+    if (activos.length <= CATALOG_CAP) return 0;
+    
+    console.log('[CAP-PURGE] Catálogo excede cap: ' + activos.length + '/' + CATALOG_CAP + '. Recortando...');
+    
+    // Ordenar por score (mayor primero), preservando publicados y con IA
+    const ordenados = (state.results || []).slice().sort((a, b) => {
+      // Priorizar publicados
+      const pubA = (state.published || []).includes(a.id) ? 1 : 0;
+      const pubB = (state.published || []).includes(b.id) ? 1 : 0;
+      if (pubA !== pubB) return pubB - pubA;
+      // Priorizar con IA
+      const iaA = a.aiTitulo ? 1 : 0;
+      const iaB = b.aiTitulo ? 1 : 0;
+      if (iaA !== iaB) return iaB - iaA;
+      // Score
+      const scoreA = Number(a.score) || 0;
+      const scoreB = Number(b.score) || 0;
+      return scoreB - scoreA;
+    });
+    
+    const sobrevivientes = ordenados.slice(0, CATALOG_CAP);
+    const eliminados = ordenados.length - sobrevivientes.length;
+    
+    // Guardar historial de eliminados (para no re-agregar)
+    state.deletedHistory = state.deletedHistory || [];
+    for (const p of ordenados.slice(CATALOG_CAP)) {
+      state.deletedHistory.push({
+        id: p.id,
+        titulo: (p.title || '').slice(0, 100),
+        motivo: 'cap-purge-' + CATALOG_CAP,
+        fecha: new Date().toISOString()
+      });
+    }
+    // Cap historial 500
+    if (state.deletedHistory.length > 500) {
+      state.deletedHistory = state.deletedHistory.slice(-500);
+    }
+    
+    state.results = sobrevivientes;
+    const activosFinales = sobrevivientes.filter(r => r.activo !== false).length;
+    state.shopStats = state.shopStats || {};
+    state.shopStats.totalActivos = activosFinales;
+    state.shopStats.ultimaPurga = new Date().toISOString();
+    state.shopStats.totalEliminados = (state.shopStats.totalEliminados || 0) + eliminados;
+    
+    await save();
+    console.log('[CAP-PURGE] Recortado: ' + eliminados + ' eliminados. Activos: ' + activosFinales);
+    return eliminados;
+  } catch(e) {
+    app.log.error('[CAP-PURGE] ' + e.message);
+    return 0;
+  }
+}
+
 async function purgaProductos() {
   const CAP_MAX = CATALOG_CAP;  // ← era 10000, ahora 5000 (coherencia con _cronSearch)
   const DIAS_PURGA = 90;
@@ -2117,7 +2182,10 @@ function schedulePlanExpiry() {
 let cronCleanMaps = null;
 function scheduleCleanMaps() {
   if (cronCleanMaps) cronCleanMaps.stop();
-  cronCleanMaps = cron.schedule('0 * * * *', function() {
+  cronCleanMaps = cron.schedule('0 * * * *', async function() {
+    // FIX E: verificar cap cada hora
+    try { await purgaDefensivaCap(); } catch(_) {}
+
     try {
       const ahora = Date.now();
       let limpiados = 0;

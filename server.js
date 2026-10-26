@@ -783,6 +783,8 @@ async function cargarDesdeNube() {
       }
       if (remoto.visits) state.visits = remoto.visits;
       // ═══ FIX: cargar campos críticos que antes se perdían ═══
+      if (remoto.referrals) state.referrals = remoto.referrals;
+
       if (remoto.sellerSubscriptions) state.sellerSubscriptions = remoto.sellerSubscriptions;
       if (remoto.notifications) state.notifications = remoto.notifications;
       if (remoto.aiUsageCounters) state.aiUsageCounters = remoto.aiUsageCounters;
@@ -933,6 +935,8 @@ async function guardarEnNube() {
         byProduct: state.visits?.byProduct || {}
       },
       // ═══ FIX: persistir campos críticos que antes se perdían ═══
+      referrals: state.referrals || {},
+
       sellerSubscriptions: (state.sellerSubscriptions || []).slice(-500),
       notifications: (state.notifications || []).slice(-500),
       aiUsageCounters: state.aiUsageCounters || null,

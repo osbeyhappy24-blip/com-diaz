@@ -1957,6 +1957,25 @@ async function cleanupProductos() {
 
 
 // ═══ FIX: Purga defensiva si el catálogo excede el cap ═══
+
+// ═══ FIX: verificar cap y desactivar automation si alcanzado ═══
+async function verificarCapYDesactivarAuto() {
+  try {
+    const activos = (state.results || []).filter(r => r.activo !== false).length;
+    if (activos >= CATALOG_CAP && state.automation && state.automation.running) {
+      state.automation.running = false;
+      await save();
+      app.log.info('[CAP-AUTO-OFF] Tope alcanzado (' + activos + '/' + CATALOG_CAP + '), automatización DESACTIVADA');
+      notifyTelegram('🛑 <b>AUTOMATIZACIÓN DESACTIVADA</b>\n\nCatálogo al tope: ' + activos + '/' + CATALOG_CAP + '\n\nSolo se actualizarán precios.').catch(() => {});
+      return true;
+    }
+    return false;
+  } catch(e) {
+    app.log.error('[CAP-AUTO-OFF] ' + e.message);
+    return false;
+  }
+}
+
 async function purgaDefensivaCap() {
   try {
     const activos = (state.results || []).filter(r => r.activo !== false);
@@ -2185,6 +2204,8 @@ function scheduleCleanMaps() {
   cronCleanMaps = cron.schedule('0 * * * *', async function() {
     // FIX E: verificar cap cada hora
     try { await purgaDefensivaCap(); } catch(_) {}
+    // Si sigue en cap, desactivar automation
+    try { await verificarCapYDesactivarAuto(); } catch(_) {}
 
     try {
       const ahora = Date.now();
@@ -4163,6 +4184,22 @@ app.delete('/api/admin/sellers/:id', async (req, reply) => {
   }
 });
 
+
+// ═══ ADMIN: forzar verificación de cap y desactivar automation ═══
+app.post('/api/admin/automation/cap-check', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  const desactivado = await verificarCapYDesactivarAuto();
+  const activos = (state.results || []).filter(r => r.activo !== false).length;
+  return {
+    ok: true,
+    activos,
+    cap: CATALOG_CAP,
+    automationRunning: state.automation?.running || false,
+    desactivadoAhora: desactivado
+  };
+});
+
 // ═══ ADMIN: reactivar un producto específico de un seller ═══
 app.post('/api/admin/sellers/:id/products/:pid/reactivate', async (req, reply) => {
   const auth = requireAdmin(req);
@@ -4482,6 +4519,12 @@ app.get('/api/automation/status', async () => ({
 
 app.post('/api/automation/play', async () => {
   const delay = state.automation.delaySeconds;
+  // Si cap alcanzado, no activar
+  const activosCap = (state.results || []).filter(r => r.activo !== false).length;
+  if (activosCap >= CATALOG_CAP) {
+    reply.code(429);
+    return { ok: false, error: 'Catálogo al tope (' + activosCap + '/' + CATALOG_CAP + '). No se puede activar. Purga primero.' };
+  }
   state.automation.running = true;
   await save();
   app.log.info('Comdiaz · play activado (sin busqueda inmediata)');

@@ -767,7 +767,7 @@ async function cargarDesdeNube() {
       if (remoto.shopConfig) state.shopConfig = { ...state.shopConfig, ...remoto.shopConfig };
       if (remoto.automation) state.automation = { ...state.automation, ...remoto.automation };
       if (remoto.sources) state.sources = remoto.sources;
-      if (remoto.published) state.published = remoto.published;
+      // [FIX] NO sobreescribir published - mantener el local con IDs reales de eBay
       if (remoto.productosManuales) state.productosManuales = remoto.productosManuales;
       if (remoto.orders) state.orders = remoto.orders;
       if (remoto.subscriptions) state.subscriptions = remoto.subscriptions;
@@ -8121,7 +8121,7 @@ async function autoSearchOnStart() {
       if (remoto && remoto.results && remoto.results.length > 500) {
         app.log.info('[AUTO-START] GitHub tiene ' + remoto.results.length + ' productos. Cargando.');
         state.results = mergeProducts(state.results || [], remoto.results);
-        if (remoto.published) state.published = remoto.published;
+        // [FIX] NO sobreescribir published - mantener el local con IDs reales de eBay
         if (remoto.productosManuales) state.productosManuales = remoto.productosManuales;
         if (remoto.categories) state.categories = remoto.categories;
         if (remoto.shopConfig) state.shopConfig = { ...state.shopConfig, ...remoto.shopConfig };

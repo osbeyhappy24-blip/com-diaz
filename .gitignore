@@ -12,3 +12,17 @@ node_modules/
 server.js.antes-*
 state-*.json
 update_render.py
+
+# State local (se guarda en GitHub, no en el repo)
+state.json
+state.json.gz
+data.json
+data.json.bak*
+
+# Logs de auditoría
+auditoria-*.log
+
+# Archivos temporales de test
+test-*.sh
+test-*.jpg
+bin_id.txt

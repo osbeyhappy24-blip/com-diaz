@@ -792,6 +792,26 @@ async function cargarDesdeNube() {
       if (remoto.deletedHistory) state.deletedHistory = remoto.deletedHistory;
       if (remoto.sre) state.sre = remoto.sre;
       app.log.info("Config cargada desde JSONBin");
+
+      // ═══ FIX: regenerar published desde results (auto-sanación) ═══
+      // Si el published local está vacío pero hay results válidos, se regenera.
+      // Si el remoto trae un published vacío pero results tiene productos, se regenera.
+      // Así el bug nunca vuelve a dejar el catálogo sin productos.
+      try {
+        const resultsArr = Array.isArray(state.results) ? state.results : [];
+        const pubArr = Array.isArray(state.published) ? state.published : [];
+        if (resultsArr.length > 0 && pubArr.length < resultsArr.length * 0.5) {
+          const pubSet = new Set(pubArr.map(String));
+          const regenerado = resultsArr
+            .filter(r => r && r.activo !== false && r.image && String(r.image).length > 10)
+            .map(r => r.id);
+          state.published = regenerado;
+          app.log.info('[PUBLISHED-FIX] Regenerado desde results: ' + regenerado.length + ' IDs');
+        }
+      } catch(e) {
+        app.log.error('[PUBLISHED-FIX] Error: ' + e.message);
+      }
+      
       
       // ═══ FUSIÓN AUTOMÁTICA DE LOCALES DESDE BACKUP ═══
       try {

@@ -2939,6 +2939,10 @@ app.post('/api/public/seller-contact', async (req, reply) => {
 
 // ═══ PÚBLICO: catálogo de vendedores para la Shop ═══
 app.get('/api/public/sellers/catalog', async (req) => {
+  // [FIX] Si Supabase no configurado, devolver vacío sin error
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SECRET_KEY) {
+    return { ok: true, total: 0, products: [], _noSupabase: true };
+  }
   try {
     const limit = Math.min(Math.max(Number(req.query?.limit) || 100, 1), 500);
     const offset = Math.max(Number(req.query?.offset) || 0, 0);
@@ -3526,7 +3530,8 @@ app.post('/api/admin/sellers/:id/force-expiry', async (req, reply) => {
 // ═══ ADMIN: resetear rate limit + failMap (útil para tests) ═══
 app.post('/api/admin/reset-ratelimit', async (req, reply) => {
   // Este endpoint NO pasa por el gate (exento abajo) para poder resetearlo incluso desde la IP bloqueada
-  const key = String(req.headers['x-comdiaz-key'] || '');
+  // [FIX Cuba] Aceptar header O query param ?k= (evita preflight CORS)
+  const key = String(req.headers['x-comdiaz-key'] || req.query?.k || '');
   const expected = String(state.pin || '');
   const a = Buffer.from(key), b = Buffer.from(expected);
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {

@@ -106,8 +106,15 @@ export function requireSeller(req) {
 export function requireAdmin(req) {
   const token = getTokenFromRequest(req);
   if (!token) {
-    // Fallback: permitir con X-Comdiaz-Key (PIN de admin)
-    return req.headers['x-comdiaz-key'] ? { tipo: 'admin', via: 'pin' } : null;
+    // [FIX Cuba] Aceptar header X-Comdiaz-Key Y query param ?k=
+    // El header dispara preflight CORS bloqueado en Cuba.
+    // El hook onRequest ya validó que el PIN sea correcto (state.pin).
+    const pinFromHeader = req.headers['x-comdiaz-key'];
+    const pinFromQuery = req.query?.k;
+    if (pinFromHeader || pinFromQuery) {
+      return { tipo: 'admin', via: 'pin' };
+    }
+    return null;
   }
   const payload = verifyJWT(token);
   if (!payload || payload.tipo !== 'admin') return null;

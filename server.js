@@ -3011,6 +3011,81 @@ app.post('/api/admin/plans/seed', async (req, reply) => {
   return { ok: true, resultados };
 });
 
+// ═══ ADMIN: Sincronizar categorías desde productos reales ═══
+// Regenera state.categories con las 37 reales que tienen los productos.
+// Elimina las categorías "fantasma" de búsqueda que no matchean con nada.
+app.post('/api/admin/sync-categories', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+  try {
+    // 1. Recopilar categorías reales de los productos publicados
+    const cats = new Map();  // categoria -> {count, esLocal}
+
+    for (const r of (state.results || [])) {
+      if (r.activo === false) continue;
+      if (!(state.published || []).includes(r.id)) continue;
+      const cat = r.category || r.source || 'Sin categoría';
+      if (!cats.has(cat)) cats.set(cat, { count: 0, esLocal: false });
+      cats.get(cat).count++;
+    }
+
+    for (const p of (state.productosManuales || [])) {
+      if (!p.publicado || (p.cantidad || 0) <= 0) continue;
+      const cat = p.category || 'Local';
+      if (!cats.has(cat)) cats.set(cat, { count: 0, esLocal: true });
+      cats.get(cat).count++;
+      cats.get(cat).esLocal = true;
+    }
+
+    // 2. Guardar las 45 anteriores en backup (dentro del state)
+    const anteriores = state.categories || [];
+
+    // 3. Generar nuevas categorías con formato {label, emoji, keywords, count}
+    const nuevas = [];
+    for (const [label, info] of cats.entries()) {
+      // Extraer emoji si el label empieza con uno
+      const emojiMatch = label.match(/^([\p{Emoji_Presentation}\p{Emoji}\u{1F300}-\u{1FAFF}]+)\s*(.+)$/u);
+      const emoji = emojiMatch ? emojiMatch[1] : '📦';
+      const texto = emojiMatch ? emojiMatch[2].trim() : label;
+
+      // Buscar keywords de la categoría anterior si existía (por label sin emoji)
+      const previa = anteriores.find(c =>
+        (c.label || '').toLowerCase() === texto.toLowerCase() ||
+        (c.label || '').toLowerCase() === label.toLowerCase()
+      );
+
+      nuevas.push({
+        label: label,
+        emoji: emoji,
+        texto: texto,
+        keywords: previa?.keywords || previa?.dummyjson || previa?.ebay || [],
+        count: info.count,
+        esLocal: info.esLocal
+      });
+    }
+
+    // 4. Ordenar por count descendente
+    nuevas.sort((a, b) => b.count - a.count);
+
+    // 5. Reemplazar
+    state.categories = nuevas;
+
+    // 6. Guardar en GitHub
+    await save();
+
+    return {
+      ok: true,
+      antes: anteriores.length,
+      despues: nuevas.length,
+      categorias: nuevas.map(c => ({ label: c.label, count: c.count }))
+    };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 app.get('/api/admin/sellers', async (req, reply) => {
   const auth = requireAdmin(req);
   if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }

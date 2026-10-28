@@ -3014,6 +3014,11 @@ app.post('/api/admin/plans/seed', async (req, reply) => {
 app.get('/api/admin/sellers', async (req, reply) => {
   const auth = requireAdmin(req);
   if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+  // [FIX] Si Supabase no configurado, devolver [] sin 500
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SECRET_KEY) {
+    return { ok: true, total: 0, sellers: [], _noSupabase: true };
+  }
   
   try {
     const estado = req.query?.estado;

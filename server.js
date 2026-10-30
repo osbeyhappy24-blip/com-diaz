@@ -3086,6 +3086,44 @@ app.post('/api/admin/sync-categories', async (req, reply) => {
   }
 });
 
+// ═══ ADMIN: Forzar limpieza del state (borra results/published locales) ═══
+// Uso: POST /api/admin/force-clean-results?k=321302
+app.post('/api/admin/force-clean-results', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+  try {
+    const antes = {
+      results: (state.results || []).length,
+      published: (state.published || []).length,
+      productosManuales: (state.productosManuales || []).length
+    };
+
+    // Borrar results y published locales
+    state.results = [];
+    state.published = [];
+
+    // Guardar a data.json local
+    try { fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2)); } catch(e) {}
+
+    // Guardar a GitHub
+    await save();
+
+    return {
+      ok: true,
+      antes,
+      despues: {
+        results: 0,
+        published: 0,
+        productosManuales: (state.productosManuales || []).length
+      }
+    };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 app.get('/api/admin/sellers', async (req, reply) => {
   const auth = requireAdmin(req);
   if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }

@@ -5220,6 +5220,17 @@ app.get('/api/public/catalog', async (req) => {
   if (process.env.SUPABASE_URL && process.env.SUPABASE_SECRET_KEY) {
     try {
       const rawSellerProds = await dbSelect('seller_products', '?publicado=eq.true&activo=eq.true&limit=2000');
+      
+      // Obtener mapa de nombres de sellers
+      const sellerNamesMap = {};
+      try {
+        const sellerIds = [...new Set((rawSellerProds || []).map(p => p.seller_id).filter(Boolean))];
+        if (sellerIds.length > 0) {
+          const sellersList = await dbSelect('sellers', '?id=in.(' + sellerIds.join(',') + ')&select=id,nombre');
+          (sellersList || []).forEach(s => { sellerNamesMap[s.id] = s.nombre; });
+        }
+      } catch(e) { console.warn('[CATALOG] Error lookup sellers:', e.message); }
+      
       sellerProducts = (rawSellerProds || []).map(sp => ({
         id: sp.id,
         title: sp.titulo,
@@ -5234,7 +5245,7 @@ app.get('/api/public/catalog', async (req) => {
         url: null,
         _isSeller: true,
         seller_id: sp.seller_id,
-        seller_nombre: sp.seller_nombre,
+        seller_nombre: sellerNamesMap[sp.seller_id] || 'Vendedor',
         provincia: sp.provincia,
         municipio: sp.municipio,
         extra: { condition: '' }

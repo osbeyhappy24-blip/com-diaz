@@ -138,9 +138,9 @@ app.addHook('onRequest', async (req, reply) => {
 app.addHook('onRequest', async (req, reply) => {
   const origin = req.headers.origin || "";
   const allowed = [
-    "https://com-diaz-web.onrender.com",
-    "https://com-diaz.onrender.com",
-    "http://com-diaz-web.onrender.com",
+    "https://osbeyhappy24-blip.github.io/com-diaz-web",
+    "https://com-diaz-ty2b.onrender.com",
+    "https://osbeyhappy24-blip.github.io/com-diaz-web",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     // Orígenes de WebView (APK privada)
@@ -152,7 +152,7 @@ app.addHook('onRequest', async (req, reply) => {
     "http://localhost",
   ];
   // Si el origin está en la lista → reflejar. Si no → reflejar también (para APK privada)
-  const allowOrigin = origin && origin !== '' ? origin : "https://com-diaz-web.onrender.com";
+  const allowOrigin = origin && origin !== '' ? origin : "https://osbeyhappy24-blip.github.io/com-diaz-web";
   reply.header("Access-Control-Allow-Origin", allowOrigin);
   reply.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Comdiaz-Key');
@@ -173,7 +173,7 @@ app.addHook('onRequest', async (req, reply) => {
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' data: https://fonts.gstatic.com",
     "img-src 'self' data: blob: https: http:",
-    "connect-src 'self' https://com-diaz.onrender.com https://com-diaz-web.onrender.com https://www.google-analytics.com https://region1.google-analytics.com https://wsrv.nl",
+    "connect-src 'self' https://com-diaz-ty2b.onrender.com https://osbeyhappy24-blip.github.io/com-diaz-web https://www.google-analytics.com https://region1.google-analytics.com https://wsrv.nl",
     "frame-src 'self' https://www.googletagmanager.com",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
@@ -646,7 +646,7 @@ function buildShareText(opts = {}) {
 
   out.push('--------------------------');
   out.push('🛍️ *Ver catalogo completo:*');
-  out.push('https://com-diaz-web.onrender.com/shop.html');
+  out.push('https://osbeyhappy24-blip.github.io/com-diaz-web/shop.html');
   out.push('');
   out.push('📲 *Pedidos por WhatsApp:*');
   out.push('https://wa.me/5351425691');
@@ -689,6 +689,11 @@ function guardarResumenAutomatico(trigger) {
     });
     if (state.summaries.length > 20) state.summaries.length = 20;
     app.log.info('Resumen guardado (' + r.count + ' productos, modo ' + r.mode + ')');
+    // [FIX] No enviar si 0 productos
+    if (!state.results || state.results.length === 0) {
+      console.log('[TELEGRAM] Sin productos, no se envía notificación');
+      return;
+    }
     const header = 'Comdiaz · nueva busqueda' + String.fromCharCode(10)
       + 'Trigger: ' + trigger + String.fromCharCode(10)
       + 'Productos: ' + state.results.length + String.fromCharCode(10)
@@ -4296,7 +4301,7 @@ app.get('/api/seller/referral', async (req, reply) => {
       } catch(_) {}
     }
     
-    const baseUrl = 'https://com-diaz-web.onrender.com';
+    const baseUrl = 'https://osbeyhappy24-blip.github.io/com-diaz-web';
     return {
       ok: true,
       code: rec.code,
@@ -4471,7 +4476,7 @@ app.get('/api/admin/referral-code/:sellerId', async (req, reply) => {
       sellerId: seller.id,
       nombre: seller.nombre,
       code: rec.code,
-      link: 'https://com-diaz-web.onrender.com/seller.html?ref=' + rec.code,
+      link: 'https://osbeyhappy24-blip.github.io/com-diaz-web/seller.html?ref=' + rec.code,
       ref_count: rec.ref_count || 0,
       ref_bonus_quota: rec.ref_bonus_quota || 0,
       referrals_made: rec.referrals_made || []
@@ -5308,7 +5313,7 @@ app.get('/api/login-attempts', async () => {
 // eBay Marketplace Account Deletion Notification
 // ═══════════════════════════════════════════════
 const EBAY_VERIFICATION_TOKEN = process.env.EBAY_VERIFICATION_TOKEN || 'comdiaz_verif_token_2026_x9k2mpQ7vLmN3bR8wZ';
-const EBAY_ENDPOINT_URL = process.env.EBAY_ENDPOINT_URL || 'https://com-diaz.onrender.com/ebay-notification';
+const EBAY_ENDPOINT_URL = process.env.EBAY_ENDPOINT_URL || 'https://com-diaz-ty2b.onrender.com/ebay-notification';
 
 // GET → eBay envía challenge_code y esperamos responder con hash SHA-256
 app.get('/ebay-notification', async (req, reply) => {
@@ -6929,7 +6934,7 @@ app.post('/api/posts/generate-ai', async (req, reply) => {
   const ref = String(body.ref || '').trim() || 'directo';
   const cfg = state.shopConfig || {};
   const wa = cfg.whatsapp || '5351425691';
-  const shopUrl = 'https://com-diaz-web.onrender.com/shop.html?ref=' + encodeURIComponent(ref);
+  const shopUrl = 'https://osbeyhappy24-blip.github.io/com-diaz-web/shop.html?ref=' + encodeURIComponent(ref);
 
   // Productos publicos
   const manuales = (state.productosManuales || []).filter(p => p.publicado !== false);
@@ -7057,7 +7062,7 @@ app.post('/api/posts/generate', async (req, reply) => {
   const ref = String(body.ref || '').trim() || 'directo';
   const cfg = state.shopConfig || {};
   const wa = cfg.whatsapp || '5351425691';
-  const shopUrl = 'https://com-diaz-web.onrender.com/shop.html?ref=' + encodeURIComponent(ref);
+  const shopUrl = 'https://osbeyhappy24-blip.github.io/com-diaz-web/shop.html?ref=' + encodeURIComponent(ref);
 
   // Obtener productos publicos
   const manuales = (state.productosManuales || []).filter(p => p.publicado !== false);
@@ -8621,9 +8626,9 @@ async function autoSearchOnStart() {
     }
     
     // Solo si GitHub también está vacío, hacer búsqueda inicial
-    app.log.info('[AUTO-START] GitHub vacío. Ejecutando búsqueda inicial.');
-    await runSearch('auto-start');
-    app.log.info('[AUTO-START] Búsqueda completada: ' + state.results.length + ' productos');
+    // [DESACTIVADO 31-Oct] Comdiaz ya no importa de eBay. Nunca ejecutar búsqueda inicial.
+    app.log.info('[AUTO-START] Desactivado — Comdiaz es marketplace de sellers');
+    return;
   } catch (e) {
     app.log.error('[AUTO-START] Error: ' + e.message);
   }

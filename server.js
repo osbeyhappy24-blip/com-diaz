@@ -388,6 +388,7 @@ const DEFAULTS = {
   loginAttempts: {}, // IP -> { count, blockedUntil }
   activityLog: [], // ultimos eventos
   subscriptions: [],
+  tiendas: [],              // Salas/tiendas virtuales de sellers
   sellerSubscriptions: [],  // Push subs de vendedores
   notifications: [],
   payments: [],
@@ -446,7 +447,37 @@ const DEFAULTS = {
   categories: DEFAULT_CATEGORIES,
   results: [],
   sources: JSON.parse(JSON.stringify(DEFAULT_SOURCE_STATE)),
-};
+}
+
+
+// ═══════════════════════════════════════════════════════
+// HELPERS DE TIENDAS (slug)
+// ═══════════════════════════════════════════════════════
+function slugify(str) {
+  return String(str || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .substring(0, 50);
+}
+
+function generateUniqueSlug(base, stateRef) {
+  let slug = slugify(base);
+  if (!slug) slug = 'tienda';
+  const existing = new Set(((stateRef.tiendas) || []).map(t => t.slug));
+  if (!existing.has(slug)) return slug;
+  let n = 2;
+  while (existing.has(slug + '-' + n)) n++;
+  return slug + '-' + n;
+}
+
+function validarSlugReservado(slug) {
+  const reservados = ['admin', 'api', 'shop', 'seller', 'seller-panel', 'home', 'login', 'register', 'tienda', 'producto', 'comdiaz', 'www', 'app', 'static'];
+  return !reservados.includes(String(slug).toLowerCase());
+}
+
+;
 
 const state = fs.existsSync(DB_FILE)
   ? { ...DEFAULTS, ...JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) }
@@ -3994,6 +4025,214 @@ function _resetMonthlyRefs() {
 }
 
 // ── Endpoint GET /api/seller/referral — link + stats ──
+
+// ═══════════════════════════════════════════════════════
+// TIENDAS VIRTUALES DE SELLERS
+// ═══════════════════════════════════════════════════════
+
+// Crear tienda (una por seller)
+app.post('/api/seller/crear-tienda', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  
+  try {
+    const { nombre, descripcion, logo, banner, color, whatsapp } = req.body || {};
+    if (!nombre || nombre.trim().length < 3) {
+      reply.code(400);
+      return { ok: false, error: 'El nombre debe tener al menos 3 caracteres' };
+    }
+    
+    const existente = (state.tiendas || []).find(t => t.seller_id === payload.sellerId);
+    if (existente) {
+      reply.code(400);
+      return { ok: false, error: 'Ya tienes una tienda creada', tienda: existente };
+    }
+    
+    let slug = generateUniqueSlug(nombre, state);
+    if (!validarSlugReservado(slug)) {
+      slug = generateUniqueSlug('tienda-' + nombre, state);
+    }
+    
+    let sellerData = null;
+    try {
+      sellerData = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(payload.sellerId));
+    } catch(e) {}
+    
+    const tienda = {
+      id: crypto.randomUUID(),
+      seller_id: payload.sellerId,
+      slug,
+      nombre: nombre.trim(),
+      descripcion: (descripcion || '').trim(),
+      logo: logo || null,
+      banner: banner || null,
+      color: color || '#003f7f',
+      whatsapp: whatsapp || (sellerData && sellerData.telefono) || null,
+      activa: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    
+    if (!state.tiendas) state.tiendas = [];
+    state.tiendas.push(tienda);
+    await save();
+    
+    return { ok: true, tienda };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
+// Ver mi tienda (si existe)
+app.get('/api/seller/mi-tienda', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  
+  const tienda = (state.tiendas || []).find(t => t.seller_id === payload.sellerId);
+  return { ok: true, tienda: tienda || null };
+});
+
+// Editar mi tienda
+app.put('/api/seller/mi-tienda', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  
+  const idx = (state.tiendas || []).findIndex(t => t.seller_id === payload.sellerId);
+  if (idx < 0) { reply.code(404); return { ok: false, error: 'No tienes tienda' }; }
+  
+  const { nombre, descripcion, logo, banner, color, whatsapp, activa } = req.body || {};
+  const tienda = state.tiendas[idx];
+  
+  if (nombre && nombre.trim().length >= 3) tienda.nombre = nombre.trim();
+  if (descripcion !== undefined) tienda.descripcion = descripcion;
+  if (logo !== undefined) tienda.logo = logo;
+  if (banner !== undefined) tienda.banner = banner;
+  if (color) tienda.color = color;
+  if (whatsapp !== undefined) tienda.whatsapp = whatsapp;
+  if (activa !== undefined) tienda.activa = !!activa;
+  tienda.updated_at = new Date().toISOString();
+  
+  await save();
+  return { ok: true, tienda };
+});
+
+// Eliminar mi tienda
+app.delete('/api/seller/mi-tienda', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  
+  const idx = (state.tiendas || []).findIndex(t => t.seller_id === payload.sellerId);
+  if (idx < 0) { reply.code(404); return { ok: false, error: 'No tienes tienda' }; }
+  
+  state.tiendas.splice(idx, 1);
+  await save();
+  return { ok: true };
+});
+
+// ═══════════════════════════════════════════════════════
+// TIENDAS PÚBLICAS (sin auth)
+// ═══════════════════════════════════════════════════════
+
+// Ver tienda por slug (público)
+app.get('/api/public/tienda/:slug', async (req, reply) => {
+  const slug = String(req.params.slug || '').toLowerCase();
+  const tienda = (state.tiendas || []).find(t => t.slug === slug && t.activa !== false);
+  if (!tienda) { reply.code(404); return { ok: false, error: 'Tienda no encontrada' }; }
+  
+  let productos = [];
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SECRET_KEY) {
+    try {
+      const rawProds = await dbSelect('seller_products', '?seller_id=eq.' + encodeURIComponent(tienda.seller_id) + '&publicado=eq.true&activo=eq.true&limit=500');
+      productos = (rawProds || []).map(sp => ({
+        id: sp.id,
+        titulo: sp.titulo,
+        descripcion: sp.descripcion,
+        precio_usd: sp.precio_usd,
+        precio_cup: sp.precio_cup,
+        categoria: sp.categoria,
+        provincia: sp.provincia,
+        municipio: sp.municipio,
+        imagenes: sp.imagenes || [],
+        estado_producto: sp.estado_producto,
+        stock: sp.stock
+      }));
+    } catch(e) {}
+  }
+  
+  const totalProductos = productos.length;
+  const provincias = [...new Set(productos.map(p => p.provincia).filter(Boolean))];
+  const categorias = [...new Set(productos.map(p => p.categoria).filter(Boolean))];
+  
+  return {
+    ok: true,
+    tienda: {
+      id: tienda.id,
+      slug: tienda.slug,
+      nombre: tienda.nombre,
+      descripcion: tienda.descripcion,
+      logo: tienda.logo,
+      banner: tienda.banner,
+      color: tienda.color,
+      whatsapp: tienda.whatsapp,
+      created_at: tienda.created_at
+    },
+    stats: { totalProductos, provincias, categorias },
+    productos
+  };
+});
+
+// Ver producto individual (público)
+app.get('/api/public/producto/:id', async (req, reply) => {
+  const id = req.params.id;
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SECRET_KEY) {
+    reply.code(503);
+    return { ok: false, error: 'Servicio no disponible' };
+  }
+  
+  try {
+    const prod = await dbSelectOne('seller_products', '?id=eq.' + encodeURIComponent(id));
+    if (!prod) { reply.code(404); return { ok: false, error: 'Producto no encontrado' }; }
+    if (prod.publicado === false || prod.activo === false) {
+      reply.code(404);
+      return { ok: false, error: 'Producto no disponible' };
+    }
+    
+    let seller = null;
+    let tienda = null;
+    try {
+      seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(prod.seller_id) + '&select=id,nombre');
+      if (seller) {
+        tienda = (state.tiendas || []).find(t => t.seller_id === seller.id) || null;
+      }
+    } catch(e) {}
+    
+    return {
+      ok: true,
+      producto: {
+        id: prod.id,
+        titulo: prod.titulo,
+        descripcion: prod.descripcion,
+        precio_usd: prod.precio_usd,
+        precio_cup: prod.precio_cup,
+        categoria: prod.categoria,
+        provincia: prod.provincia,
+        municipio: prod.municipio,
+        imagenes: prod.imagenes || [],
+        estado_producto: prod.estado_producto,
+        stock: prod.stock,
+        seller_nombre: (seller && seller.nombre) || 'Vendedor',
+        seller_id: prod.seller_id,
+        tienda_slug: tienda ? tienda.slug : null,
+        tienda_nombre: tienda ? tienda.nombre : null
+      }
+    };
+  } catch(e) {
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 app.get('/api/seller/referral', async (req, reply) => {
   const payload = requireSeller(req);
   if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
@@ -5231,25 +5470,36 @@ app.get('/api/public/catalog', async (req) => {
         }
       } catch(e) { console.warn('[CATALOG] Error lookup sellers:', e.message); }
       
-      sellerProducts = (rawSellerProds || []).map(sp => ({
-        id: sp.id,
-        title: sp.titulo,
-        aiTitulo: sp.titulo,
-        aiDescripcion: sp.descripcion,
-        image: (Array.isArray(sp.imagenes) && sp.imagenes[0]) || null,
-        images: Array.isArray(sp.imagenes) ? sp.imagenes : [],
-        salePrice: sp.precio_usd,
-        precioCUP: sp.precio_cup,
-        category: sp.categoria,
-        source: 'seller',
-        url: null,
-        _isSeller: true,
-        seller_id: sp.seller_id,
-        seller_nombre: sellerNamesMap[sp.seller_id] || 'Vendedor',
-        provincia: sp.provincia,
-        municipio: sp.municipio,
-        extra: { condition: '' }
-      }));
+      // Mapa de tiendas por seller_id (para badge "🏪 [tienda]")
+      const tiendasMap = {};
+      (state.tiendas || []).forEach(t => {
+        if (t.activa !== false) tiendasMap[t.seller_id] = { slug: t.slug, nombre: t.nombre };
+      });
+      
+      sellerProducts = (rawSellerProds || []).map(sp => {
+        const tiendaInfo = tiendasMap[sp.seller_id] || null;
+        return {
+          id: sp.id,
+          title: sp.titulo,
+          aiTitulo: sp.titulo,
+          aiDescripcion: sp.descripcion,
+          image: (Array.isArray(sp.imagenes) && sp.imagenes[0]) || null,
+          images: Array.isArray(sp.imagenes) ? sp.imagenes : [],
+          salePrice: sp.precio_usd,
+          precioCUP: sp.precio_cup,
+          category: sp.categoria,
+          source: 'seller',
+          url: null,
+          _isSeller: true,
+          seller_id: sp.seller_id,
+          seller_nombre: sellerNamesMap[sp.seller_id] || 'Vendedor',
+          tienda_slug: tiendaInfo ? tiendaInfo.slug : null,
+          tienda_nombre: tiendaInfo ? tiendaInfo.nombre : null,
+          provincia: sp.provincia,
+          municipio: sp.municipio,
+          extra: { condition: '' }
+        };
+      });
       items = items.concat(sellerProducts);
       console.log('[CATALOG] +' + sellerProducts.length + ' productos seller');
     } catch(e) {
@@ -5330,6 +5580,8 @@ app.get('/api/public/catalog', async (req) => {
       is_seller: !!p._isSeller,
       seller_id: p.seller_id || null,
       seller_nombre: p.seller_nombre || null,
+      tienda_slug: p.tienda_slug || null,
+      tienda_nombre: p.tienda_nombre || null,
       provincia: p.provincia || null,
       municipio: p.municipio || null,
     };

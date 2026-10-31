@@ -4689,71 +4689,70 @@ async function calcularStatsBanner() {
 // ═══ PÚBLICO: banners dinámicos basados en datos reales ═══
 app.get('/api/public/banners-real', async () => {
   try {
-    const stats = await calcularStatsBanner();
-    if (!stats) return { ok: false, banners: [] };
-    
-    const banners = [];
-    
-    // 1. Total productos disponibles
-    if (stats.totalProductos > 0) {
-      banners.push({
-        id: 'real-1',
-        texto: stats.totalProductos + ' productos disponibles',
-        subtexto: stats.productosLocales + ' productos cubanos',
-        emoji: '📦',
+    // Banners de promoción REAL sin números — inspiran confianza, no cuentan
+    const banners = [
+      {
+        id: 'promo-1',
+        texto: 'Compra cubano, compra cerca',
+        subtexto: 'Productos auténticos de vendedores locales',
+        emoji: '🇨🇺',
+        color: 'purple',
+        badge: 'LOCAL',
+        badgeColor: 'limited',
+        filtro: 'local',
+        activo: true
+      },
+      {
+        id: 'promo-2',
+        texto: 'Compra directo por WhatsApp',
+        subtexto: 'Sin comisiones ocultas',
+        emoji: '💬',
+        color: 'green',
+        badge: 'FREE',
+        badgeColor: 'free',
+        filtro: 'all',
+        activo: true
+      },
+      {
+        id: 'promo-3',
+        texto: 'Envío a toda Cuba',
+        subtexto: 'Rápido y seguro',
+        emoji: '🚚',
         color: 'gradient',
-        badge: 'LIVE',
+        badge: 'HOT',
+        badgeColor: 'hot',
+        filtro: 'all',
+        activo: true
+      },
+      {
+        id: 'promo-4',
+        texto: 'Tiendas verificadas',
+        subtexto: 'Compra con confianza',
+        emoji: '🏪',
+        color: 'yellow',
+        badge: 'VERIFIED',
         badgeColor: 'new',
         filtro: 'all',
         activo: true
-      });
-    }
-    
-    // 2. (OCULTO temporalmente) Vendedores verificados
-    // Se reactivará cuando haya promoción/monetización
-    
-    // 3. Precio mínimo real
-    if (stats.precioMin) {
-      banners.push({
-        id: 'real-3',
-        texto: 'Desde $' + stats.precioMin.toFixed(2) + ' USD',
-        subtexto: 'Encuentra ofertas reales',
-        emoji: '💰',
-        color: 'yellow',
-        badge: 'SALE',
-        badgeColor: 'sale',
+      },
+      {
+        id: 'promo-5',
+        texto: 'Novedades cada semana',
+        subtexto: 'Descubre nuevos productos',
+        emoji: '✨',
+        color: 'blue',
+        badge: 'NEW',
+        badgeColor: 'new',
         filtro: 'all',
         activo: true
-      });
-    }
-    
-    // 4. Productos cubanos (siempre)
-    banners.push({
-      id: 'real-4',
-      texto: 'Productos cubanos auténticos',
-      subtexto: 'Directo de vendedores locales',
-      emoji: '🇨🇺',
-      color: 'purple',
-      badge: 'LOCAL',
-      badgeColor: 'limited',
-      filtro: 'local',
-      activo: true
-    });
-    
-    // 5. Sin comisiones (siempre VERDAD)
-    banners.push({
-      id: 'real-5',
-      texto: 'Compra directo por WhatsApp',
-      subtexto: 'Sin comisiones ocultas',
-      emoji: '💬',
-      color: 'green',
-      badge: 'FREE',
-      badgeColor: 'free',
-      filtro: 'all',
-      activo: true
-    });
-    
-    return { ok: true, banners, stats };
+      }
+    ];
+
+    return {
+      ok: true,
+      banners,
+      rotacionSeg: 5
+    };
   } catch(e) {
     app.log.error('[BANNERS-REAL] ' + e.message);
     return { ok: false, error: e.message, banners: [] };

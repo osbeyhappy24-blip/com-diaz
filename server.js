@@ -4135,6 +4135,40 @@ app.delete('/api/seller/mi-tienda', async (req, reply) => {
 // ═══════════════════════════════════════════════════════
 
 // Ver tienda por slug (público)
+
+// Listar todas las tiendas activas (público)
+app.get('/api/public/tiendas', async () => {
+  const tiendasActivas = (state.tiendas || []).filter(t => t.activa !== false);
+  
+  // Cargar conteo de productos por tienda
+  const tiendasConStats = await Promise.all(tiendasActivas.map(async (t) => {
+    let numProductos = 0;
+    try {
+      if (process.env.SUPABASE_URL && process.env.SUPABASE_SECRET_KEY) {
+        const prods = await dbSelect('seller_products', '?seller_id=eq.' + encodeURIComponent(t.seller_id) + '&publicado=eq.true&activo=eq.true&select=id');
+        numProductos = (prods || []).length;
+      }
+    } catch(e) {}
+    
+    return {
+      id: t.id,
+      slug: t.slug,
+      nombre: t.nombre,
+      descripcion: t.descripcion,
+      logo: t.logo,
+      banner: t.banner,
+      color: t.color || '#003f7f',
+      numProductos,
+      created_at: t.created_at
+    };
+  }));
+  
+  // Ordenar por número de productos (más activas primero)
+  tiendasConStats.sort((a, b) => b.numProductos - a.numProductos);
+  
+  return { ok: true, total: tiendasConStats.length, tiendas: tiendasConStats };
+});
+
 app.get('/api/public/tienda/:slug', async (req, reply) => {
   const slug = String(req.params.slug || '').toLowerCase();
   const tienda = (state.tiendas || []).find(t => t.slug === slug && t.activa !== false);

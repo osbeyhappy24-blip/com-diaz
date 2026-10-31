@@ -4185,6 +4185,14 @@ app.get('/api/public/tienda/:slug', async (req, reply) => {
 // Ver producto individual (público)
 app.get('/api/public/producto/:id', async (req, reply) => {
   const id = req.params.id;
+  
+  // Validar UUID para evitar 500 de Supabase
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(id)) {
+    reply.code(400);
+    return { ok: false, error: 'ID de producto inválido' };
+  }
+  
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SECRET_KEY) {
     reply.code(503);
     return { ok: false, error: 'Servicio no disponible' };

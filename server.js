@@ -2470,7 +2470,16 @@ app.post('/api/seller/register', async (req, reply) => {
     _entry.count++;
     rateLimitMap.set(_rlKey, _entry);
 
-    const { nombre, telefono, password, provincia, municipio, email, plan_id, referred_by_code } = req.body || {};
+    const _body = req.body || {};
+    const nombre = _body.nombre;
+    const telefono = _body.telefono;
+    const password = _body.password;
+    const provincia = _body.provincia;
+    const municipio = _body.municipio;
+    const email = _body.email;
+    const plan_id = _body.plan_id;
+    // [FIX] Aceptar ambos nombres: referred_by_code (backend) y ref (frontend)
+    const referred_by_code = _body.referred_by_code || _body.ref || null;
     
     if (!nombre || String(nombre).trim().length < 2) {
       reply.code(400); return { ok: false, error: 'Nombre inválido' };
@@ -2564,6 +2573,26 @@ app.post('/api/seller/register', async (req, reply) => {
         ref_last_reset: new Date().toISOString().slice(0, 10),
         referrals_made: []
       };
+
+      // [FIX] Actualizar al REFERENTE: sumar ref_count + bonus + made
+      if (referenteId && state.referrals[referenteId]) {
+        const refRecord = state.referrals[referenteId];
+        refRecord.ref_count = (refRecord.ref_count || 0) + 1;
+        refRecord.ref_bonus_quota = (refRecord.ref_bonus_quota || 0) + 5;
+        if (!Array.isArray(refRecord.referrals_made)) refRecord.referrals_made = [];
+        refRecord.referrals_made.push(nuevo.id);
+        app.log.info('[REFERRAL] +5 bonus a ' + referenteId + ' (total refs: ' + refRecord.ref_count + ')');
+        
+        // Notificar al referente
+        try {
+          if (state.notifications && typeof notificar === 'function') {
+            await notificar(referenteId, 'referral_registered', 
+              '🎁 Nuevo referido',
+              nombre + ' se registró con tu link. +5 productos disponibles cuando sea aprobado.'
+            );
+          }
+        } catch(_) {}
+      }
       await save();
 
       // Notificar al referente INMEDIATAMENTE

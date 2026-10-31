@@ -5215,6 +5215,37 @@ app.get('/api/public/catalog', async (req) => {
     items = items.concat(manualesPublicos);
   }
 
+  // NUEVO: Productos de sellers desde Supabase
+  let sellerProducts = [];
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SECRET_KEY) {
+    try {
+      const rawSellerProds = await dbSelect('seller_products', '?publicado=eq.true&activo=eq.true&limit=2000');
+      sellerProducts = (rawSellerProds || []).map(sp => ({
+        id: sp.id,
+        title: sp.titulo,
+        aiTitulo: sp.titulo,
+        aiDescripcion: sp.descripcion,
+        image: (Array.isArray(sp.imagenes) && sp.imagenes[0]) || null,
+        images: Array.isArray(sp.imagenes) ? sp.imagenes : [],
+        salePrice: sp.precio_usd,
+        precioCUP: sp.precio_cup,
+        category: sp.categoria,
+        source: 'seller',
+        url: null,
+        _isSeller: true,
+        seller_id: sp.seller_id,
+        seller_nombre: sp.seller_nombre,
+        provincia: sp.provincia,
+        municipio: sp.municipio,
+        extra: { condition: '' }
+      }));
+      items = items.concat(sellerProducts);
+      console.log('[CATALOG] +' + sellerProducts.length + ' productos seller');
+    } catch(e) {
+      console.warn('[CATALOG] Error seller products:', e.message);
+    }
+  }
+
   if (categoria && categoria !== 'todas') {
     items = items.filter(p => p.category === categoria);
   }
@@ -5279,10 +5310,17 @@ app.get('/api/public/catalog', async (req) => {
       image: img,
       images: imgs,
       salePrice: p.salePrice,
+      precioCUP: p.precioCUP || null,
       category: p.category || p.source,
       source: p.source,
       url: p.url,
       condition: p.extra?.condition || '',
+      // NUEVO: campos seller
+      is_seller: !!p._isSeller,
+      seller_id: p.seller_id || null,
+      seller_nombre: p.seller_nombre || null,
+      provincia: p.provincia || null,
+      municipio: p.municipio || null,
     };
   });
 
@@ -5293,7 +5331,8 @@ app.get('/api/public/catalog', async (req) => {
       .map(r => r.category),
     ...(state.productosManuales || [])
       .filter(p => p.publicado && (p.cantidad || 0) > 0)
-      .map(p => p.category || 'Local')
+      .map(p => p.category || 'Local'),
+    ...sellerProducts.map(p => p.category).filter(Boolean)
   ])].sort();
 
   const featuredIds = state.featured || [];

@@ -2548,6 +2548,10 @@ app.post('/api/seller/register', async (req, reply) => {
       }
     }
 
+    // ═══ AUTO-APROBACIÓN: plan básico aprobado al instante, planes de pago pendientes ═══
+    const estadoInicial = planElegido === 'basico' ? 'aprobado' : 'pendiente';
+    app.log.info('[REGISTER] Plan: ' + planElegido + ' → estado: ' + estadoInicial);
+
     const nuevo = await dbInsert('sellers', {
       nombre: String(nombre).trim().slice(0, 80),
       telefono: tel,
@@ -2556,7 +2560,7 @@ app.post('/api/seller/register', async (req, reply) => {
       provincia: provincia ? String(provincia).slice(0, 60) : null,
       municipio: municipio ? String(municipio).slice(0, 60) : null,
       plan_id: planElegido,
-      estado: 'pendiente',
+      estado: estadoInicial,
       activo: true,
       cuota_usada: 0,
     });

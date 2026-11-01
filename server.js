@@ -815,6 +815,7 @@ async function cargarDesdeNube() {
       if (remoto.automation) state.automation = { ...state.automation, ...remoto.automation };
       if (remoto.sources) state.sources = remoto.sources;
       // [FIX] NO sobreescribir published - mantener el local con IDs reales de eBay
+      if (remoto.tiendas) state.tiendas = remoto.tiendas;
       if (remoto.productosManuales) state.productosManuales = remoto.productosManuales;
       if (remoto.orders) state.orders = remoto.orders;
       if (remoto.subscriptions) state.subscriptions = remoto.subscriptions;
@@ -956,6 +957,21 @@ async function guardarEnNube() {
         vecesVisto: r.vecesVisto || 1,
         activo: r.activo !== false,
         prioridad: r.prioridad || 'normal',
+      })),
+      tiendas: (state.tiendas || []).map(t => ({
+        id: t.id,
+        seller_id: t.seller_id,
+        slug: t.slug,
+        nombre: t.nombre,
+        descripcion: t.descripcion || '',
+        logo: t.logo || null,
+        banner: t.banner || null,
+        color: t.color || '#003f7f',
+        whatsapp: t.whatsapp || null,
+        activa: t.activa !== false,
+        visitas: t.visitas || 0,
+        created_at: t.created_at,
+        updated_at: t.updated_at
       })),
       productosManuales: (state.productosManuales || []).slice(0, 5000).map(p => ({
         id: p.id,

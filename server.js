@@ -4185,7 +4185,8 @@ app.get('/api/seller/mi-tienda', async (req, reply) => {
   let esFundador = false;
   let posicionFundador = null;
   try {
-    const todos = await dbSelect('sellers', '?select=id,created_at&order=created_at.asc&limit=100');
+    // Solo sellers APROBADOS cuentan para el badge (los tests/suspendidos no)
+    const todos = await dbSelect('sellers', '?select=id,created_at&estado=eq.aprobado&order=created_at.asc&limit=100');
     const pos = (todos || []).findIndex(s => s.id === payload.sellerId);
     if (pos >= 0 && pos < 100) { esFundador = true; posicionFundador = pos + 1; }
   } catch(e) { app.log.warn('[FUNDADOR] ' + e.message); }

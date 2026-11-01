@@ -277,7 +277,21 @@ const DEFAULTS = {
   published: [],
   featured: [], // IDs destacados
   visits: { total: 0, history: [], byDay: {}, byProduct: {} },
-  productosManuales: [], // productos locales agregados manualmente // IDs publicados al catálogo público
+  productosManuales: [], // productos locales agregados manualmente
+  tiendas: [],           // 🏪 Tiendas de sellers
+  orders: [],            // 🛒 Órdenes
+  subscriptions: [],     // 📬 Suscripciones
+  importConfig: {},      // 🔧 Configuración de importación
+  appVersion: null,      // 📌 Versión
+  referrals: {},         // 🎁 Sistema de referidos
+  sellerSubscriptions: {}, // 📊 Subs por seller
+  notifications: [],     // 🔔 Notificaciones in-app
+  aiUsageCounters: {},   // 🤖 Contadores IA
+  shopStats: {},         // 📈 Stats shop
+  deletedHistory: [],    // 🗑️ Historial de borrados
+  sre: {},               // 🔧 SRE metadata
+  tesoreria: { movimientos: [] }, // 💰 Movimientos
+  // IDs publicados al catálogo público
   shopConfig: {
     whatsapp: '5351425691',
     // ═══ Métodos de pago (editables por admin en home.html) ═══
@@ -1009,6 +1023,17 @@ async function guardarEnNube() {
       tesoreria: {
         movimientos: (state.tesoreria?.movimientos || []).slice(-500)
       },
+      // 🆕 Campos que se cargaban pero NUNCA se guardaban (bug de persistencia)
+      visits: state.visits || { total: 0, history: [], byDay: {}, byProduct: {} },
+      referrals: state.referrals || {},
+      sellerSubscriptions: state.sellerSubscriptions || {},
+      notifications: (state.notifications || []).slice(-500),  // cap 500 (LRU)
+      aiUsageCounters: state.aiUsageCounters || {},
+      shopStats: state.shopStats || {},
+      deletedHistory: (state.deletedHistory || []).slice(-200),
+      sre: state.sre || {},
+      importConfig: state.importConfig || {},
+      appVersion: state.appVersion || null,
       appVersion: state.appVersion,
       importConfig: state.importConfig,
       visits: {

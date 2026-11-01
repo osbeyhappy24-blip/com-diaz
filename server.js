@@ -4164,7 +4164,25 @@ app.get('/api/seller/mi-tienda', async (req, reply) => {
   if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
   
   const tienda = (state.tiendas || []).find(t => t.seller_id === payload.sellerId);
-  return { ok: true, tienda: tienda || null };
+
+  // 🏆 Es Fundador si está en los primeros 100 sellers registrados
+  let esFundador = false;
+  let posicionFundador = null;
+  try {
+    const todos = Object.values(state.sellers || {})
+      .filter(s => s && s.role === 'seller' && s.created_at)
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const pos = todos.findIndex(s => s.id === payload.sellerId);
+    if (pos >= 0 && pos < 100) { esFundador = true; posicionFundador = pos + 1; }
+  } catch(e) {}
+
+  return {
+    ok: true,
+    tienda: tienda || null,
+    esFundador,
+    posicionFundador,
+    visitas: tienda ? (tienda.visitas || 0) : 0
+  };
 });
 
 // Editar mi tienda
@@ -4244,6 +4262,24 @@ app.get('/api/public/tiendas', async () => {
   return { ok: true, total: tiendasConStats.length, tiendas: tiendasConStats };
 });
 
+app.post('/api/public/tienda/:slug/visita', async (req, reply) => {
+  const slug = String(req.params.slug || '').toLowerCase();
+  const t = (state.tiendas || []).find(x => x.slug === slug && x.activa !== false);
+  if (!t) { reply.code(404); return { ok: false }; }
+  const ip = (req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+  const key = 'visita:' + slug + ':' + ip;
+  const ahora = Date.now();
+  const ultima = (state.visitasDebounce && state.visitasDebounce[key]) || 0;
+  if (ahora - ultima < 6 * 60 * 60 * 1000) {
+    return { ok: true, contada: false, visitas: t.visitas || 0 };
+  }
+  if (!state.visitasDebounce) state.visitasDebounce = {};
+  state.visitasDebounce[key] = ahora;
+  t.visitas = (t.visitas || 0) + 1;
+  await save();
+  return { ok: true, contada: true, visitas: t.visitas };
+});
+
 app.get('/api/public/tienda/:slug', async (req, reply) => {
   const slug = String(req.params.slug || '').toLowerCase();
   const tienda = (state.tiendas || []).find(t => t.slug === slug && t.activa !== false);
@@ -4284,6 +4320,7 @@ app.get('/api/public/tienda/:slug', async (req, reply) => {
       banner: tienda.banner,
       color: tienda.color,
       whatsapp: tienda.whatsapp,
+      visitas: tienda.visitas || 0,
       created_at: tienda.created_at
     },
     stats: { totalProductos, provincias, categorias },

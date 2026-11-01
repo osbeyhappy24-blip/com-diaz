@@ -3240,12 +3240,34 @@ app.get('/api/admin/sellers', async (req, reply) => {
       (planes || []).forEach(p => { planesMap[p.id] = p; });
     } catch(_) {}
 
-    // No devolver password_hash + añadir plan resuelto
+    // Mapa de tiendas por seller_id para cruzar (una sola pasada)
+    const tiendasPorSellerId = {};
+    (state.tiendas || []).forEach(t => { tiendasPorSellerId[t.seller_id] = t; });
+
+    // No devolver password_hash + añadir plan resuelto + tienda
     const limpios = (sellers || []).map(s => {
       const { password_hash, ...rest } = s;
       const plan = planesMap[rest.plan_id] || null;
       rest.plan = plan;
       rest.cuota_max = plan ? plan.max_productos : 50;
+
+      // 🆕 Info de tienda (o null si no tiene)
+      const t = tiendasPorSellerId[rest.id];
+      if (t) {
+        rest.tienda = {
+          id: t.id,
+          slug: t.slug,
+          nombre: t.nombre,
+          activa: t.activa !== false,
+          visitas: t.visitas || 0,
+          color: t.color || '#003f7f',
+          created_at: t.created_at,
+          url: 'https://osbeyhappy24-blip.github.io/com-diaz-web/tienda.html?slug=' + encodeURIComponent(t.slug)
+        };
+      } else {
+        rest.tienda = null;
+      }
+
       return rest;
     });
     return { ok: true, total: limpios.length, sellers: limpios };
@@ -5097,6 +5119,17 @@ app.get('/api/admin/stats', async (req, reply) => {
     const totalProductos = manualesActivos + sellersActivos;
     const pagosPendientes = await dbCount('payments', '?estado=eq.pendiente');
     
+    // 🆕 Stats de tiendas (para panel admin)
+    const tiendasArr = state.tiendas || [];
+    const tiendasActivas = tiendasArr.filter(t => t.activa !== false);
+    const tiendasStats = {
+      total: tiendasArr.length,
+      activas: tiendasActivas.length,
+      inactivas: tiendasArr.length - tiendasActivas.length,
+      visitas: tiendasArr.reduce((sum, t) => sum + (t.visitas || 0), 0),
+      con_productos: 0
+    };
+
     return {
       ok: true,
       sellers: {
@@ -5106,6 +5139,7 @@ app.get('/api/admin/stats', async (req, reply) => {
         suspendidos_pago: suspendidosPago,
         total: pendientes + aprobados + suspendidos + suspendidosPago,
       },
+      tiendas: tiendasStats,
       productos: {
         totalActivos: totalProductos,
         manuales: manualesActivos,

@@ -4086,9 +4086,27 @@ app.post('/api/seller/crear-tienda', async (req, reply) => {
       return { ok: false, error: 'Ya tienes una tienda creada', tienda: existente };
     }
     
-    let slug = generateUniqueSlug(nombre, state);
-    if (!validarSlugReservado(slug)) {
-      slug = generateUniqueSlug('tienda-' + nombre, state);
+    // Slug elegido por el usuario (o autogenerado si no viene)
+    let slug = (req.body && req.body.slug) ? String(req.body.slug).trim().toLowerCase() : '';
+    if (slug) {
+      if (!/^[a-z0-9-]+$/.test(slug) || slug.length < 3 || slug.length > 40) {
+        reply.code(400);
+        return { ok: false, error: 'Slug inválido: solo minúsculas, números y guiones (3-40 chars)' };
+      }
+      if (!validarSlugReservado(slug)) {
+        reply.code(400);
+        return { ok: false, error: 'Ese nombre de tienda está reservado, elige otro' };
+      }
+      const enUso = (state.tiendas || []).some(t => t.slug === slug);
+      if (enUso) {
+        reply.code(400);
+        return { ok: false, error: 'Ese nombre de tienda ya está en uso, elige otro' };
+      }
+    } else {
+      slug = generateUniqueSlug(nombre, state);
+      if (!validarSlugReservado(slug)) {
+        slug = generateUniqueSlug('tienda-' + nombre, state);
+      }
     }
     
     let sellerData = null;

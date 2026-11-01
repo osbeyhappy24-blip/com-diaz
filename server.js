@@ -17,7 +17,7 @@ import { ApifyClient } from 'apify-client';
 import { initApify, isApifyReady, searchSource, buildProductsForShop, SOURCES_CONFIG } from './import.js';
 import webpush from 'web-push';
 
-import { dbSelect, dbSelectOne, dbInsert, dbUpdate, dbDelete, dbCount, dbHealth } from './supabase.js';
+import { dbSelect, dbSelectOne, dbInsert, dbUpdate, dbDelete, dbCount, dbHealth, storageGet, storagePut } from './supabase.js';
 import { hashPassword, verifyPassword, createJWT, verifyJWT, getTokenFromRequest, requireSeller, requireAdmin, validarTelefono, normalizarTelefono } from './auth.js';
 
 // Cargar claves VAPID desde .vapid-keys.txt
@@ -818,7 +818,38 @@ function esContenidoBloqueado(producto) {
 
 // Cargar estado desde JSONBin (al arrancar)
 async function cargarDesdeNube() {
-  if (!isJSONBinConfigured()) return false;
+  // ═══ NUEVO: intentar Supabase Storage PRIMERO (fuente principal) ═══
+  let cargadoDeStorage = false;
+  try {
+    const full = await storageGet('state-full.json');
+    if (full && typeof full === 'object') {
+      if (Array.isArray(full.tiendas)) state.tiendas = full.tiendas;
+      if (full.visits) state.visits = full.visits;
+      if (full.referrals) state.referrals = full.referrals;
+      if (full.sellerSubscriptions) state.sellerSubscriptions = full.sellerSubscriptions;
+      if (Array.isArray(full.notifications)) state.notifications = full.notifications;
+      if (full.aiUsageCounters) state.aiUsageCounters = full.aiUsageCounters;
+      if (full.shopStats) state.shopStats = full.shopStats;
+      if (Array.isArray(full.deletedHistory)) state.deletedHistory = full.deletedHistory;
+      if (full.sre) state.sre = full.sre;
+      if (Array.isArray(full.orders)) state.orders = full.orders;
+      if (Array.isArray(full.subscriptions)) state.subscriptions = full.subscriptions;
+      if (full.importConfig) state.importConfig = full.importConfig;
+      if (full.appVersion) state.appVersion = full.appVersion;
+      if (Array.isArray(full.productosManuales)) state.productosManuales = full.productosManuales;
+      if (full.tesoreria && Array.isArray(full.tesoreria.movimientos)) {
+        state.tesoreria = state.tesoreria || { movimientos: [] };
+        state.tesoreria.movimientos = full.tesoreria.movimientos;
+      }
+      cargadoDeStorage = true;
+      app.log.info('[STORAGE] state-full.json cargado OK (tiendas: ' + (state.tiendas||[]).length + ', notif: ' + (state.notifications||[]).length + ')');
+    }
+  } catch(e) {
+    app.log.warn('[STORAGE] Carga falló: ' + e.message);
+  }
+
+  // ═══ FALLBACK: GitHub State (backup config pequeña) ═══
+  if (!isJSONBinConfigured()) return cargadoDeStorage;
   try {
     const remoto = await leerEstado();
     if (remoto && typeof remoto === 'object' && Object.keys(remoto).length > 0) {
@@ -1061,6 +1092,33 @@ async function guardarEnNube() {
       } : null,
     };
     const result = await guardarEstado(esencia);
+
+    // ═══ NUEVO: también guardar TODO el state a Supabase Storage (escala a GB) ═══
+    try {
+      const fullState = {
+        tiendas: state.tiendas || [],
+        visits: state.visits || {},
+        referrals: state.referrals || {},
+        sellerSubscriptions: state.sellerSubscriptions || {},
+        notifications: (state.notifications || []).slice(-500),
+        aiUsageCounters: state.aiUsageCounters || {},
+        shopStats: state.shopStats || {},
+        deletedHistory: (state.deletedHistory || []).slice(-200),
+        sre: state.sre || {},
+        orders: (state.orders || []).slice(0, 200),
+        subscriptions: (state.subscriptions || []).slice(-500),
+        importConfig: state.importConfig || {},
+        appVersion: state.appVersion || null,
+        productosManuales: (state.productosManuales || []).slice(0, 5000),
+        tesoreria: { movimientos: (state.tesoreria?.movimientos || []).slice(-500) },
+        savedAt: new Date().toISOString()
+      };
+      const r = await storagePut('state-full.json', fullState);
+      if (r.ok) app.log.info('[STORAGE] state-full.json guardado (' + Math.round(r.size/1024) + ' KB)');
+      else app.log.warn('[STORAGE] Fallo guardando: ' + r.error);
+    } catch(e) {
+      app.log.warn('[STORAGE] ' + e.message);
+    }
     if (result && result.binId) {
       try { fs.writeFileSync(path.join(process.cwd(), 'bin_id.txt'), result.binId); } catch(e) {}
     }

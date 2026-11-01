@@ -169,7 +169,7 @@ app.addHook('onRequest', async (req, reply) => {
   // Content Security Policy - permite Google Fonts, Analytics, imagenes externas, service worker
   const csp = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.google-analytics.com",
+    "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' data: https://fonts.gstatic.com",
     "img-src 'self' data: blob: https: http:",
@@ -470,6 +470,17 @@ function generateUniqueSlug(base, stateRef) {
   let n = 2;
   while (existing.has(slug + '-' + n)) n++;
   return slug + '-' + n;
+}
+
+function sanitizarTexto(str, max = 200) {
+  if (!str) return '';
+  return String(str)
+    .replace(/<[^>]*>/g, '')          // quitar tags HTML
+    .replace(/javascript:/gi, '')     // quitar protocolo js:
+    .replace(/on\w+\s*=/gi, '')       // quitar onerror=, onclick=, etc
+    .replace(/[<>]/g, '')             // quitar < >
+    .trim()
+    .substring(0, max);
 }
 
 function validarSlugReservado(slug) {
@@ -4074,8 +4085,15 @@ app.post('/api/seller/crear-tienda', async (req, reply) => {
   if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
   
   try {
-    const { nombre, descripcion, logo, banner, color, whatsapp } = req.body || {};
-    if (!nombre || nombre.trim().length < 3) {
+    const body = req.body || {};
+    const nombre = sanitizarTexto(body.nombre, 100);
+    const descripcion = sanitizarTexto(body.descripcion, 500);
+    const logo = sanitizarTexto(body.logo, 500);
+    const banner = sanitizarTexto(body.banner, 500);
+    const color = (body.color && /^#[0-9a-f]{6}$/i.test(body.color)) ? body.color : '#003f7f';
+    const whatsapp = String(body.whatsapp || '').replace(/[^0-9]/g, '').substring(0, 20);
+
+    if (!nombre || nombre.length < 3) {
       reply.code(400);
       return { ok: false, error: 'El nombre debe tener al menos 3 caracteres' };
     }
@@ -4157,16 +4175,17 @@ app.put('/api/seller/mi-tienda', async (req, reply) => {
   const idx = (state.tiendas || []).findIndex(t => t.seller_id === payload.sellerId);
   if (idx < 0) { reply.code(404); return { ok: false, error: 'No tienes tienda' }; }
   
-  const { nombre, descripcion, logo, banner, color, whatsapp, activa } = req.body || {};
+  const body = req.body || {};
   const tienda = state.tiendas[idx];
-  
-  if (nombre && nombre.trim().length >= 3) tienda.nombre = nombre.trim();
-  if (descripcion !== undefined) tienda.descripcion = descripcion;
-  if (logo !== undefined) tienda.logo = logo;
-  if (banner !== undefined) tienda.banner = banner;
-  if (color) tienda.color = color;
-  if (whatsapp !== undefined) tienda.whatsapp = whatsapp;
-  if (activa !== undefined) tienda.activa = !!activa;
+
+  const nNombre = sanitizarTexto(body.nombre, 100);
+  if (nNombre && nNombre.length >= 3) tienda.nombre = nNombre;
+  if (body.descripcion !== undefined) tienda.descripcion = sanitizarTexto(body.descripcion, 500);
+  if (body.logo !== undefined) tienda.logo = sanitizarTexto(body.logo, 500);
+  if (body.banner !== undefined) tienda.banner = sanitizarTexto(body.banner, 500);
+  if (body.color && /^#[0-9a-f]{6}$/i.test(body.color)) tienda.color = body.color;
+  if (body.whatsapp !== undefined) tienda.whatsapp = String(body.whatsapp).replace(/[^0-9]/g, '').substring(0, 20);
+  if (body.activa !== undefined) tienda.activa = !!body.activa;
   tienda.updated_at = new Date().toISOString();
   
   await save();

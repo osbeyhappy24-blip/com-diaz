@@ -4181,16 +4181,14 @@ app.get('/api/seller/mi-tienda', async (req, reply) => {
   
   const tienda = (state.tiendas || []).find(t => t.seller_id === payload.sellerId);
 
-  // 🏆 Es Fundador si está en los primeros 100 sellers registrados
+  // 🏆 Es Fundador si está en los primeros 100 sellers registrados (consulta Supabase)
   let esFundador = false;
   let posicionFundador = null;
   try {
-    const todos = Object.values(state.sellers || {})
-      .filter(s => s && s.role === 'seller' && s.created_at)
-      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    const pos = todos.findIndex(s => s.id === payload.sellerId);
+    const todos = await dbSelect('sellers', '?select=id,created_at&order=created_at.asc&limit=100');
+    const pos = (todos || []).findIndex(s => s.id === payload.sellerId);
     if (pos >= 0 && pos < 100) { esFundador = true; posicionFundador = pos + 1; }
-  } catch(e) {}
+  } catch(e) { app.log.warn('[FUNDADOR] ' + e.message); }
 
   return {
     ok: true,

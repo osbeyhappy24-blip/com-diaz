@@ -4435,6 +4435,130 @@ async function categorizarAutomaticamente(titulo) {
 }
 
 
+
+// ═══ WORKER DE IA AUTOMÁTICO ═══
+const iaJobs = new Map(); // Almacena el progreso por seller
+
+async function optimizarProductoConIA(titulo, descripcionActual) {
+  const prompt = `Eres un vendedor cubano experto. Optimiza este producto:
+Título actual: "${titulo}"
+Descripción actual: "${descripcionActual || 'sin descripción'}"
+
+Devuelve un JSON estricto con este formato:
+{"titulo": "Título mejorado (máx 60 caracteres, atractivo, con emoji si aplica)", "descripcion": "Descripción persuasiva (2-3 líneas, sin comillas)", "categoria": "Categoría (Instrumentos Musicales, Tecnología, Hogar, Ropa, Belleza, Herramientas, Energía, Otros)"}
+
+Responde SOLO el JSON, sin markdown.`;
+
+  // Intento Gemini
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+    });
+    if (res.status === 429) throw new Error('429');
+    const data = await res.json();
+    if (data.candidates) {
+      const text = data.candidates[0].content.parts[0].text;
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) return JSON.parse(jsonMatch[0]);
+    }
+  } catch(e) {}
+
+  // Fallback Groq
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` },
+      body: JSON.stringify({ model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: prompt }], max_tokens: 200 })
+    });
+    const data = await res.json();
+    if (data.choices) {
+      const text = data.choices[0].message.content;
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) return JSON.parse(jsonMatch[0]);
+    }
+  } catch(e) {}
+
+  return null;
+}
+
+async function procesarMejoraIA(sellerId) {
+  const job = iaJobs.get(sellerId);
+  if (!job || job.estado !== 'en_cola') return;
+
+  job.estado = 'procesando';
+  job.iniciadoEn = Date.now();
+
+  for (let i = 0; i < job.productos.length; i++) {
+    const p = job.productos[i];
+    try {
+      const opt = await optimizarProductoConIA(p.titulo, p.descripcion);
+      if (opt) {
+        const updates = {};
+        if (opt.titulo) updates.titulo = opt.titulo;
+        if (opt.descripcion) updates.descripcion = opt.descripcion;
+        if (opt.categoria) updates.categoria = opt.categoria;
+        await dbUpdate('seller_products', p.id, updates);
+        job.ultimoProducto = opt.titulo || p.titulo;
+      }
+    } catch(e) {
+      console.log('[IA-WORKER] Error:', e.message);
+    }
+    job.procesados = i + 1;
+    // Delay 2.5s entre productos para no saturar
+    await new Promise(r => setTimeout(r, 2500));
+  }
+
+  job.estado = 'completado';
+  job.completadoEn = Date.now();
+  console.log(`[IA-WORKER] Seller ${sellerId} completó ${job.procesados}/${job.total}`);
+}
+
+// Endpoint para iniciar
+app.post('/api/seller/iniciar-mejora-ia', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+  const productos = await dbSelect('seller_products', '?seller_id=eq.' + payload.sellerId + '&select=id,titulo,descripcion&limit=100');
+  if (!productos || productos.length === 0) return { ok: false, error: 'No tienes productos para procesar' };
+
+  const existing = iaJobs.get(payload.sellerId);
+  if (existing && existing.estado === 'procesando') {
+    return { ok: true, job: existing, mensaje: 'Ya está en proceso' };
+  }
+
+  const job = {
+    sellerId: payload.sellerId,
+    estado: 'en_cola',
+    total: productos.length,
+    procesados: 0,
+    productos,
+    creadoEn: Date.now()
+  };
+  iaJobs.set(payload.sellerId, job);
+
+  // Iniciar en background (no esperar)
+  procesarMejoraIA(payload.sellerId).catch(e => console.log('[IA-WORKER]', e.message));
+
+  return { ok: true, job: { estado: job.estado, total: job.total, procesados: 0 } };
+});
+
+// Endpoint para estado
+app.get('/api/seller/estado-mejora-ia', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false }; }
+  const job = iaJobs.get(payload.sellerId);
+  if (!job) return { ok: true, job: null };
+  return { ok: true, job: {
+    estado: job.estado,
+    total: job.total,
+    procesados: job.procesados,
+    ultimoProducto: job.ultimoProducto || null
+  }};
+});
+
+
 app.post('/api/public/tienda/:slug/visita', async (req, reply) => {
   const slug = String(req.params.slug || '').toLowerCase();
   const t = (state.tiendas || []).find(x => x.slug === slug && x.activa !== false);

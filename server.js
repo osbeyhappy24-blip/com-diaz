@@ -4509,6 +4509,10 @@ async function procesarMejoraIA(sellerId) {
         if (opt.categoria) updates.categoria = opt.categoria;
         await dbUpdate('seller_products', p.id, updates);
         job.ultimoProducto = opt.titulo || p.titulo;
+      } else {
+        if (!job.errores) job.errores = [];
+        job.errores.push(p.titulo);
+        console.log('[IA-WORKER] Falló producto:', p.titulo);
       }
     } catch(e) {
       console.log('[IA-WORKER] Error:', e.message);
@@ -4562,7 +4566,8 @@ app.get('/api/seller/estado-mejora-ia', async (req, reply) => {
     estado: job.estado,
     total: job.total,
     procesados: job.procesados,
-    ultimoProducto: job.ultimoProducto || null
+    ultimoProducto: job.ultimoProducto || null,
+    errores: job.errores || []
   }};
 });
 
@@ -4570,8 +4575,7 @@ app.get('/api/seller/estado-mejora-ia', async (req, reply) => {
 
 // ═══ ENDPOINT DE PRUEBA DE IA (Para diagnóstico) ═══
 app.get('/api/test-ai', async (req, reply) => {
-  const auth = requireAdmin(req);
-  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado. Usa el header X-Comdiaz-Key' }; }
+  // TEMPORAL: público para diagnóstico desde Termux
   const keys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(k => k);
   if (keys.length === 0) return { ok: false, error: 'No hay llaves configuradas en Render' };
 

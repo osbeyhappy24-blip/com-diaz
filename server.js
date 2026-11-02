@@ -279,7 +279,8 @@ const DEFAULTS = {
   featured: [], // IDs destacados
   visits: { total: 0, history: [], byDay: {}, byProduct: {} },
   productosManuales: [], // productos locales agregados manualmente
-  tiendas: [],           // 🏪 Tiendas de sellers
+  tiendas: [],
+  iaOptimizado: {}, // Registro de productos ya procesados por la IA           // 🏪 Tiendas de sellers
   orders: [],            // 🛒 Órdenes
   subscriptions: [],     // 📬 Suscripciones
   importConfig: {},      // 🔧 Configuración de importación
@@ -403,7 +404,8 @@ const DEFAULTS = {
   loginAttempts: {}, // IP -> { count, blockedUntil }
   activityLog: [], // ultimos eventos
   subscriptions: [],
-  tiendas: [],              // Salas/tiendas virtuales de sellers
+  tiendas: [],
+  iaOptimizado: {}, // Registro de productos ya procesados por la IA              // Salas/tiendas virtuales de sellers
   sellerSubscriptions: [],  // Push subs de vendedores
   notifications: [],
   payments: [],
@@ -4412,7 +4414,7 @@ async function categorizarAutomaticamente(titulo) {
   // 2. Si no hay regla, usar IA (Gemini) si está configurada
   if (process.env.GEMINI_API_KEY) {
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4468,7 +4470,7 @@ Responde SOLO el JSON, sin markdown.`;
     if (!apiKey) break;
 
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
@@ -4510,6 +4512,10 @@ async function procesarMejoraIA(sellerId) {
         if (opt.categoria) updates.categoria = opt.categoria;
         await dbUpdate('seller_products', p.id, updates);
         job.ultimoProducto = opt.titulo || p.titulo;
+        // Guardar que este producto ya fue optimizado (con timestamp)
+        if (!state.iaOptimizado) state.iaOptimizado = {};
+        state.iaOptimizado[p.id] = Date.now();
+        await save(); // Guardar en Supabase Storage / GitHub
       } else {
         if (!job.errores) job.errores = [];
         job.errores.push(p.titulo);
@@ -4533,7 +4539,17 @@ app.post('/api/seller/iniciar-mejora-ia', async (req, reply) => {
   const payload = requireSeller(req);
   if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
 
-  const productos = await dbSelect('seller_products', '?seller_id=eq.' + payload.sellerId + '&select=id,titulo,descripcion&publicado=eq.true&activo=eq.true&limit=100');
+  const productos = await dbSelect('seller_products', '?seller_id=eq.' + payload.sellerId + '&select=id,titulo,descripcion,updated_at&publicado=eq.true&activo=eq.true&limit=100');
+  
+  // Filtrar los que ya fueron procesados por la IA
+  const productosPendientes = (productos || []).filter(p => {
+    const ultimaOptimizacion = state.iaOptimizado?.[p.id];
+    if (!ultimaOptimizacion) return true; // Nunca se ha procesado
+    const ultimaEdicion = new Date(p.updated_at).getTime();
+    return ultimaEdicion > ultimaOptimizacion; // El producto se editó después de la última optimización
+  });
+
+  if (productosPendientes.length === 0) return { ok: false, error: 'Todos tus productos ya están optimizados por la IA' };
   if (!productos || productos.length === 0) return { ok: false, error: 'No tienes productos para procesar' };
 
   const existing = iaJobs.get(payload.sellerId);
@@ -4586,7 +4602,7 @@ app.post('/api/test-ai', async (req, reply) => {
     try {
       let url, options;
       if (type === 'gemini') {
-        url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' + key;
+        url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + key;
         options = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: 'OK' }] }] }) };
       } else if (type === 'groq') {
         url = 'https://api.groq.com/openai/v1/chat/completions';
@@ -4603,6 +4619,24 @@ app.post('/api/test-ai', async (req, reply) => {
   }
   return { ok: true, results };
 });
+
+
+// ═══ ENDPOINT PARA BORRAR PRODUCTOS (ADMIN) ═══
+app.delete('/api/admin/products/:id', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  
+  try {
+    await dbDelete('seller_products', '?id=eq.' + encodeURIComponent(req.params.id));
+    // También borrar del registro de IA
+    if (state.iaOptimizado) delete state.iaOptimizado[req.params.id];
+    await save();
+    return { ok: true, message: 'Producto eliminado' };
+  } catch(e) {
+    reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
 
 app.post('/api/public/tienda/:slug/visita', async (req, reply) => {
   const slug = String(req.params.slug || '').toLowerCase();

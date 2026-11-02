@@ -4467,7 +4467,7 @@ Responde SOLO el JSON, sin markdown.`;
     if (!apiKey) break;
 
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
@@ -4564,6 +4564,42 @@ app.get('/api/seller/estado-mejora-ia', async (req, reply) => {
     procesados: job.procesados,
     ultimoProducto: job.ultimoProducto || null
   }};
+});
+
+
+
+// ═══ ENDPOINT DE PRUEBA DE IA (Para diagnóstico) ═══
+app.get('/api/test-ai', async (req, reply) => {
+  const keys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(k => k);
+  if (keys.length === 0) return { ok: false, error: 'No hay llaves configuradas en Render' };
+
+  const results = [];
+  // Probamos solo las primeras 3 para no saturar
+  for (let i = 0; i < Math.min(keys.length, 3); i++) {
+    const key = keys[i];
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: 'Di OK' }] }] })
+      });
+      
+      if (res.status === 429 || res.status === 503) {
+        results.push({ key: i + 1, status: 'Agotada/Saturada (429/503)' });
+      } else if (res.status === 401 || res.status === 403) {
+        results.push({ key: i + 1, status: 'Inválida (401/403)' });
+      } else if (res.ok) {
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || 'OK';
+        results.push({ key: i + 1, status: '✅ FUNCIONA', response: text.trim() });
+      } else {
+        results.push({ key: i + 1, status: 'Error HTTP ' + res.status });
+      }
+    } catch (e) {
+      results.push({ key: i + 1, status: 'Error de red: ' + e.message });
+    }
+  }
+  return { ok: true, results };
 });
 
 

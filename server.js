@@ -112,7 +112,8 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/ebay-notification')) return;
   if (req.url.startsWith('/api/pin/change')) return;
   if (req.url.startsWith('/api/app-version') && req.method === 'GET') return;
-  if (req.url.startsWith('/api/admin/reset-ratelimit')) return;  // reset bypass
+  if (req.url.startsWith('/api/admin/reset-ratelimit')) return;
+  if (req.url.startsWith('/api/test-ai')) return; // BYPASS TEST IA  // reset bypass
   const expected = state.pin;
   if (!expected) { reply.code(503).send({ ok: false, error: 'Servicio no configurado' }); return; }
 
@@ -4467,7 +4468,7 @@ Responde SOLO el JSON, sin markdown.`;
     if (!apiKey) break;
 
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
@@ -4585,7 +4586,7 @@ app.post('/api/test-ai', async (req, reply) => {
     try {
       let url, options;
       if (type === 'gemini') {
-        url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + key;
+        url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' + key;
         options = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: 'OK' }] }] }) };
       } else if (type === 'groq') {
         url = 'https://api.groq.com/openai/v1/chat/completions';

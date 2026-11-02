@@ -4574,40 +4574,34 @@ app.get('/api/seller/estado-mejora-ia', async (req, reply) => {
 
 
 // ═══ ENDPOINT DE PRUEBA DE IA (Para diagnóstico) ═══
-app.get('/api/test-ai', async (req, reply) => {
-  // TEMPORAL: público para diagnóstico desde Termux
-  const keys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(k => k);
-  if (keys.length === 0) return { ok: false, error: 'No hay llaves configuradas en Render' };
 
+
+app.post('/api/test-ai', async (req, reply) => {
+  const { keys } = req.body || {};
+  if (!keys || !Array.isArray(keys)) return { ok: false, error: 'Faltan keys' };
   const results = [];
-  // Probamos solo las primeras 3 para no saturar
-  for (let i = 0; i < Math.min(keys.length, 3); i++) {
-    const key = keys[i];
+  for (const item of keys) {
+    const { type, key } = item;
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: 'Di OK' }] }] })
-      });
-      
-      if (res.status === 429 || res.status === 503) {
-        results.push({ key: i + 1, status: 'Agotada/Saturada (429/503)' });
-      } else if (res.status === 401 || res.status === 403) {
-        results.push({ key: i + 1, status: 'Inválida (401/403)' });
-      } else if (res.ok) {
-        const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || 'OK';
-        results.push({ key: i + 1, status: '✅ FUNCIONA', response: text.trim() });
-      } else {
-        results.push({ key: i + 1, status: 'Error HTTP ' + res.status });
+      let url, options;
+      if (type === 'gemini') {
+        url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + key;
+        options = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: 'OK' }] }] }) };
+      } else if (type === 'groq') {
+        url = 'https://api.groq.com/openai/v1/chat/completions';
+        options = { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key }, body: JSON.stringify({ model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: 'OK' }], max_tokens: 5 }) };
+      } else if (type === 'nvidia') {
+        url = 'https://integrate.api.nvidia.com/v1/chat/completions';
+        options = { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key }, body: JSON.stringify({ model: 'meta/llama3-8b-instruct', messages: [{ role: 'user', content: 'OK' }], max_tokens: 5 }) };
       }
-    } catch (e) {
-      results.push({ key: i + 1, status: 'Error de red: ' + e.message });
-    }
+      if (url) {
+        const res = await fetch(url, options);
+        results.push({ type, key_preview: key.slice(0, 8) + '...', status: res.status, ok: res.ok });
+      }
+    } catch(e) { results.push({ type, key_preview: key.slice(0, 8) + '...', status: 'Error: ' + e.message, ok: false }); }
   }
   return { ok: true, results };
 });
-
 
 app.post('/api/public/tienda/:slug/visita', async (req, reply) => {
   const slug = String(req.params.slug || '').toLowerCase();

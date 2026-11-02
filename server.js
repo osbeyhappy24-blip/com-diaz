@@ -4439,6 +4439,17 @@ async function categorizarAutomaticamente(titulo) {
 // ═══ WORKER DE IA AUTOMÁTICO ═══
 const iaJobs = new Map(); // Almacena el progreso por seller
 
+// ═══ ROTADOR DE API KEYS PARA IA ═══
+const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(k => k);
+let keyIndex = 0;
+
+function getNextKey() {
+  if (GEMINI_KEYS.length === 0) return null;
+  const key = GEMINI_KEYS[keyIndex];
+  keyIndex = (keyIndex + 1) % GEMINI_KEYS.length;
+  return key;
+}
+
 async function optimizarProductoConIA(titulo, descripcionActual) {
   const prompt = `Eres un vendedor cubano experto. Optimiza este producto:
 Título actual: "${titulo}"
@@ -4449,37 +4460,34 @@ Devuelve un JSON estricto con este formato:
 
 Responde SOLO el JSON, sin markdown.`;
 
-  // Intento Gemini
-  try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.GEMINI_API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-    });
-    if (res.status === 429) throw new Error('429');
-    const data = await res.json();
-    if (data.candidates) {
-      const text = data.candidates[0].content.parts[0].text;
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) return JSON.parse(jsonMatch[0]);
-    }
-  } catch(e) {}
+  const maxIntentos = GEMINI_KEYS.length || 1;
+  
+  for (let i = 0; i < maxIntentos; i++) {
+    const apiKey = getNextKey() || process.env.GEMINI_API_KEY;
+    if (!apiKey) break;
 
-  // Fallback Groq
-  try {
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` },
-      body: JSON.stringify({ model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: prompt }], max_tokens: 200 })
-    });
-    const data = await res.json();
-    if (data.choices) {
-      const text = data.choices[0].message.content;
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) return JSON.parse(jsonMatch[0]);
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      });
+      
+      if (res.status === 429) {
+        console.log(`[IA] Llave agotada (429). Rotando a la siguiente...`);
+        continue;
+      }
+      
+      const data = await res.json();
+      if (data.candidates) {
+        const text = data.candidates[0].content.parts[0].text;
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) return JSON.parse(jsonMatch[0]);
+      }
+    } catch(e) {
+      console.log(`[IA] Error con esta llave: ${e.message}. Rotando...`);
     }
-  } catch(e) {}
-
+  }
   return null;
 }
 

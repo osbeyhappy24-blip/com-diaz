@@ -4528,7 +4528,7 @@ app.post('/api/seller/iniciar-mejora-ia', async (req, reply) => {
   const payload = requireSeller(req);
   if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
 
-  const productos = await dbSelect('seller_products', '?seller_id=eq.' + payload.sellerId + '&select=id,titulo,descripcion&limit=100');
+  const productos = await dbSelect('seller_products', '?seller_id=eq.' + payload.sellerId + '&select=id,titulo,descripcion&publicado=eq.true&activo=eq.true&limit=100');
   if (!productos || productos.length === 0) return { ok: false, error: 'No tienes productos para procesar' };
 
   const existing = iaJobs.get(payload.sellerId);
@@ -4570,6 +4570,8 @@ app.get('/api/seller/estado-mejora-ia', async (req, reply) => {
 
 // ═══ ENDPOINT DE PRUEBA DE IA (Para diagnóstico) ═══
 app.get('/api/test-ai', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado. Usa el header X-Comdiaz-Key' }; }
   const keys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(k => k);
   if (keys.length === 0) return { ok: false, error: 'No hay llaves configuradas en Render' };
 

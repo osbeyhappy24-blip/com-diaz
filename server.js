@@ -494,7 +494,7 @@ function sanitizarTexto(str, max = 200) {
     .replace(/on\w+\s*=/gi, '')       // quitar onerror=, onclick=, etc
     .replace(/[<>]/g, '')             // quitar < >
     .trim()
-    .substring(0, max);
+    .substring(0, max > 1000 ? max : Math.min(max, str.length));
 }
 
 function validarSlugReservado(slug) {
@@ -4209,8 +4209,8 @@ app.post('/api/seller/crear-tienda', async (req, reply) => {
     const body = req.body || {};
     const nombre = sanitizarTexto(body.nombre, 100);
     const descripcion = sanitizarTexto(body.descripcion, 500);
-    const logo = sanitizarTexto(body.logo, 500);
-    const banner = sanitizarTexto(body.banner, 500);
+    const logo = sanitizarTexto(body.logo, 500000);
+    const banner = sanitizarTexto(body.banner, 500000);
     const color = (body.color && /^#[0-9a-f]{6}$/i.test(body.color)) ? body.color : '#003f7f';
     const whatsapp = String(body.whatsapp || '').replace(/[^0-9]/g, '').substring(0, 20);
 
@@ -4319,7 +4319,7 @@ app.put('/api/seller/mi-tienda', async (req, reply) => {
   const nNombre = sanitizarTexto(body.nombre, 100);
   if (nNombre && nNombre.length >= 3) tienda.nombre = nNombre;
   if (body.descripcion !== undefined) tienda.descripcion = sanitizarTexto(body.descripcion, 500);
-  if (body.logo !== undefined) tienda.logo = sanitizarTexto(body.logo, 500);
+  if (body.logo !== undefined) tienda.logo = sanitizarTexto(body.logo, 500000);
   if (body.banner !== undefined) tienda.banner = sanitizarTexto(body.banner, 500);
   if (body.color && /^#[0-9a-f]{6}$/i.test(body.color)) tienda.color = body.color;
   if (body.whatsapp !== undefined) tienda.whatsapp = String(body.whatsapp).replace(/[^0-9]/g, '').substring(0, 20);

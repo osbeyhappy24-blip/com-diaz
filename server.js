@@ -4665,6 +4665,32 @@ app.get('/api/list-models', async (req, reply) => {
 });
 
 
+
+// ═══ RECATEGORIZAR PRODUCTOS EXISTENTES (REGLAS) ═══
+app.post('/api/admin/recategorizar', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+  try {
+    const productos = await dbSelect('seller_products', '?select=id,titulo,categoria&limit=500');
+    let actualizados = 0;
+
+    for (const p of productos || []) {
+      if (p.categoria && p.categoria !== 'Otros' && p.categoria !== 'Sin categoría') continue;
+      const nuevaCat = await categorizarAutomaticamente(p.titulo || '');
+      if (nuevaCat && nuevaCat !== 'Otros') {
+        await dbUpdate('seller_products', p.id, { categoria: nuevaCat });
+        actualizados++;
+      }
+    }
+
+    return { ok: true, total: productos.length, actualizados };
+  } catch(e) {
+    reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
+
 app.post('/api/public/tienda/:slug/visita', async (req, reply) => {
   const slug = String(req.params.slug || '').toLowerCase();
   const t = (state.tiendas || []).find(x => x.slug === slug && x.activa !== false);

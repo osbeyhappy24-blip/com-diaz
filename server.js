@@ -114,6 +114,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/api/app-version') && req.method === 'GET') return;
   if (req.url.startsWith('/api/admin/reset-ratelimit')) return;
   if (req.url.startsWith('/api/test-ai')) return;
+  if (req.url.startsWith('/api/admin/recategorizar')) return;
   if (req.url.startsWith('/api/list-models')) return; // BYPASS TEST IA  // reset bypass
   const expected = state.pin;
   if (!expected) { reply.code(503).send({ ok: false, error: 'Servicio no configurado' }); return; }
@@ -4668,8 +4669,8 @@ app.get('/api/list-models', async (req, reply) => {
 
 // ═══ RECATEGORIZAR PRODUCTOS EXISTENTES (REGLAS) ═══
 app.post('/api/admin/recategorizar', async (req, reply) => {
-  const auth = requireAdmin(req);
-  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  const key = req.headers['x-comdiaz-key'] || req.headers['x-api-key'] || '';
+  if (key !== process.env.COMDIAZ_KEY) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
 
   try {
     const productos = await dbSelect('seller_products', '?select=id,titulo,categoria&limit=500');

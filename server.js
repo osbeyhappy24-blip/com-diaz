@@ -2911,7 +2911,11 @@ app.post('/api/seller/products', async (req, reply) => {
       reply.code(400); return { ok: false, error: 'Precio USD requerido' };
     }
     
-    const nuevo = await dbInsert('seller_products', {
+    // Auto-categorizar si no viene categoría
+      if (!categoria && titulo) {
+        categoria = await categorizarAutomaticamente(titulo);
+      }
+      const nuevo = await dbInsert('seller_products', {
       seller_id: seller.id,
       titulo: String(body.titulo).trim().slice(0, 200),
       descripcion: body.descripcion ? String(body.descripcion).slice(0, 2000) : null,
@@ -4381,6 +4385,55 @@ app.get('/api/public/tiendas', async () => {
   
   return { ok: true, total: tiendasConStats.length, tiendas: tiendasConStats };
 });
+
+
+// ═══ AUTO-CATEGORIZACIÓN (Reglas + IA) ═══
+const REGLAS_CATEGORIAS = {
+  'Instrumentos Musicales': ['guitarra', 'piano', 'bateria', 'microfono', 'violin', 'flauta', 'trompeta', 'bajo', 'amplificador', 'cuerda', 'teclado musical'],
+  'Tecnología': ['celular', 'iphone', 'samsung', 'laptop', 'pc', 'computadora', 'audifonos', 'cargador', 'tablet', 'reloj inteligente', 'smartwatch'],
+  'Hogar': ['ventilador', 'lavadora', 'nevera', 'refrigerador', 'cama', 'silla', 'mesa', 'cocina', 'olla', 'sarten', 'lampara', 'ventilador de pared'],
+  'Ropa y Calzado': ['camisa', 'pantalon', 'zapatos', 'tenis', 'vestido', 'ropa', 'shorts', 'blusa', 'falda'],
+  'Belleza': ['perfume', 'crema', 'maquillaje', 'labial', 'colonia', 'shampoo', 'jabon'],
+  'Herramientas': ['taladro', 'martillo', 'destornillador', 'sierra', 'llave', 'alicate'],
+  'Energía': ['panel solar', 'bateria', 'inversor', 'generador', 'power bank', 'cargador solar']
+};
+
+async function categorizarAutomaticamente(titulo) {
+  const t = String(titulo).toLowerCase();
+  
+  // 1. Buscar en reglas locales primero (rápido y gratis)
+  for (const [categoria, palabras] of Object.entries(REGLAS_CATEGORIAS)) {
+    if (palabras.some(p => t.includes(p))) {
+      return categoria;
+    }
+  }
+  
+  // 2. Si no hay regla, usar IA (Gemini) si está configurada
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `Clasifica este producto en una sola categoría (máximo 3 palabras). Responde solo con la categoría, sin explicaciones: "${titulo}"`
+            }]
+          }]
+        })
+      });
+      const data = await response.json();
+      if (data.candidates && data.candidates[0].content.parts[0].text) {
+        return data.candidates[0].content.parts[0].text.trim();
+      }
+    } catch(e) {
+      console.log('[AUTO-CAT] Error con Gemini:', e.message);
+    }
+  }
+  
+  return 'Otros'; // Fallback
+}
+
 
 app.post('/api/public/tienda/:slug/visita', async (req, reply) => {
   const slug = String(req.params.slug || '').toLowerCase();

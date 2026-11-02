@@ -113,7 +113,8 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/api/pin/change')) return;
   if (req.url.startsWith('/api/app-version') && req.method === 'GET') return;
   if (req.url.startsWith('/api/admin/reset-ratelimit')) return;
-  if (req.url.startsWith('/api/test-ai')) return; // BYPASS TEST IA  // reset bypass
+  if (req.url.startsWith('/api/test-ai')) return;
+  if (req.url.startsWith('/api/list-models')) return; // BYPASS TEST IA  // reset bypass
   const expected = state.pin;
   if (!expected) { reply.code(503).send({ ok: false, error: 'Servicio no configurado' }); return; }
 
@@ -4634,6 +4635,32 @@ app.delete('/api/admin/products/:id', async (req, reply) => {
     return { ok: true, message: 'Producto eliminado' };
   } catch(e) {
     reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
+
+
+// ═══ ENDPOINT PARA LISTAR MODELOS DISPONIBLES ═══
+app.get('/api/list-models', async (req, reply) => {
+  const keys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(k => k);
+  if (keys.length === 0) return { ok: false, error: 'No hay llaves en Render' };
+  
+  const apiKey = keys[0];
+  try {
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+      headers: { 'x-goog-api-key': apiKey }
+    });
+    const data = await res.json();
+    if (!data.models) return { ok: false, error: 'Respuesta inesperada', raw: data };
+    
+    // Filtrar solo los que soportan generateContent
+    const disponibles = data.models
+      .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+      .map(m => m.name.replace('models/', ''));
+    
+    return { ok: true, total: disponibles.length, modelos: disponibles };
+  } catch(e) {
+    return { ok: false, error: e.message };
   }
 });
 

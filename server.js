@@ -2921,6 +2921,9 @@ app.post('/api/seller/products', async (req, reply) => {
         categoria = await categorizarAutomaticamente(titulo);
       }
       const nuevo = await dbInsert('seller_products', {
+        ganga_activa: body.ganga_activa || false,
+        ganga_precio: body.ganga_precio ? parseFloat(body.ganga_precio) : null,
+        ganga_fin: body.ganga_fin || null,
       seller_id: seller.id,
       titulo: String(body.titulo).trim().slice(0, 200),
       descripcion: body.descripcion ? String(body.descripcion).slice(0, 2000) : null,
@@ -3144,6 +3147,9 @@ app.get('/api/public/sellers/catalog', async (req) => {
         titulo: p.titulo,
         descripcion: p.descripcion,
         precio_usd: p.precio_usd,
+      ganga_activa: p.ganga_activa || false,
+      ganga_precio: p.ganga_precio || null,
+      ganga_fin: p.ganga_fin || null,
         precio_cup: p.precio_cup,
         categoria: p.categoria,
         provincia: p.provincia,

@@ -4980,6 +4980,21 @@ app.get('/api/public/tienda/:slug', async (req, reply) => {
     app.log.error('[VERIFICADO] Error: ' + e.message); 
   }
   
+  // 🆕 Garantizar que cada producto tenga el whatsapp del vendedor
+  if (Array.isArray(productos)) {
+    productos.forEach(p => {
+      if (!p.whatsapp_vendedor) {
+        p.whatsapp_vendedor = tienda.whatsapp || null;
+      }
+      if (!p.seller_id) {
+        p.seller_id = tienda.seller_id || null;
+      }
+      if (!p.whatsapp) {
+        p.whatsapp = tienda.whatsapp || null;
+      }
+    });
+  }
+  
   return {
     ok: true,
     tienda: {
@@ -5046,7 +5061,7 @@ app.get('/api/public/tienda/:slug', async (req, reply) => {
     
     return {
       ok: true,
-      whatsapp_vendedor: (seller && seller.telefono) || null,
+      whatsapp_vendedor: (seller && seller.telefono) || (tienda && tienda.whatsapp) || null,
       producto: {
         id: prod.id,
         titulo: prod.titulo,

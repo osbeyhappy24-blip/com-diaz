@@ -4799,6 +4799,23 @@ app.get('/api/public/tienda/:slug', async (req, reply) => {
   const totalProductos = productos.length;
   const provincias = [...new Set(productos.map(p => p.provincia).filter(Boolean))];
   const categorias = [...new Set(productos.map(p => p.categoria).filter(Boolean))];
+
+  // 🛡️ Lógica de Vendedor Verificado
+  let esVerificado = false;
+  try {
+    const sellerData = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(tienda.seller_id));
+    if (sellerData && sellerData.estado === 'aprobado' && sellerData.activo === true) {
+      // Verificar si tiene reseñas y buen promedio
+      const resenas = await dbSelect('resenas', '?vendedor_id=eq.' + encodeURIComponent(tienda.seller_id));
+      const totalResenas = resenas ? resenas.length : 0;
+      const promedio = totalResenas > 0 ? (resenas.reduce((a, b) => a + b.calificacion, 0) / totalResenas) : 0;
+      
+      // Regla: Tiene al menos 1 producto Y (tiene 3+ reseñas con 4.0+ estrellas O es nuevo pero tiene WhatsApp)
+      if (totalProductos > 0 && (promedio >= 4.0 || (totalResenas === 0 && sellerData.whatsapp))) {
+        esVerificado = true;
+      }
+    }
+  } catch(e) { console.log('Error verificando seller:', e.message); }
   
   return {
     ok: true,
@@ -4812,6 +4829,7 @@ app.get('/api/public/tienda/:slug', async (req, reply) => {
       color: tienda.color,
       whatsapp: tienda.whatsapp,
       visitas: tienda.visitas || 0,
+      esVerificado: esVerificado, // <-- NUEVO CAMPO
       created_at: tienda.created_at
     },
     stats: { totalProductos, provincias, categorias },

@@ -4803,7 +4803,15 @@ app.get('/api/public/tienda/:slug', async (req, reply) => {
   // 🛡️ Lógica de Vendedor Verificado
   let esVerificado = false;
   try {
-    const sellerData = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(tienda.seller_id));
+    // Asegurar que tienda.seller_id exista (si no, buscar por el slug en state.tiendas)
+    let sellerId = tienda.seller_id;
+    if (!sellerId) {
+      const tiendaEnState = (state.tiendas || []).find(t => t.slug === slug);
+      sellerId = tiendaEnState ? tiendaEnState.seller_id : null;
+    }
+    if (!sellerId) throw new Error('seller_id no encontrado para la tienda');
+    
+    const sellerData = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(sellerId));
     if (sellerData && sellerData.estado === 'aprobado' && sellerData.activo === true) {
       // Verificar si tiene reseñas y buen promedio
       const resenas = await dbSelect('resenas', '?vendedor_id=eq.' + encodeURIComponent(tienda.seller_id));
@@ -4831,6 +4839,7 @@ app.get('/api/public/tienda/:slug', async (req, reply) => {
       banner: tienda.banner,
       color: tienda.color,
       whatsapp: tienda.whatsapp,
+      seller_id: tienda.seller_id,   // <-- AÑADIR ESTO
       visitas: tienda.visitas || 0,
       esVerificado: esVerificado, // <-- NUEVO CAMPO
       created_at: tienda.created_at

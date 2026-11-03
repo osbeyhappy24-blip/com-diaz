@@ -3019,8 +3019,12 @@ app.delete('/api/seller/products/:id', async (req, reply) => {
       }
     }
 
-    // 🆕 Hard delete: borrar el producto COMPLETAMENTE de la DB
-    await dbDelete('seller_products', req.params.id);
+    // 🆕 Soft delete: mover a la papelera de reciclaje (no borrar de la DB)
+    await dbUpdate('seller_products', req.params.id, { 
+      activo: false, 
+      publicado: false, 
+      deleted_at: new Date().toISOString() 
+    });
 
     return { ok: true };
   } catch(e) {
@@ -6310,13 +6314,7 @@ app.get('/api/public/catalog', async (req) => {
   const categoria = req.query?.categoria;
 
   // Importados (siempre se publican automáticamente)
-  let items = (state.results || []).filter(r => (state.published || []).includes(r.id));
-
-  // Manuales (solo los publicados y con stock)
-  if (Array.isArray(state.productosManuales)) {
-    const manualesPublicos = state.productosManuales.filter(p => p.publicado && (p.cantidad || 0) > 0);
-    items = items.concat(manualesPublicos);
-  }
+  let items = []; // 🆕 Solo productos de tiendas
 
   // NUEVO: Productos de sellers desde Supabase
   let sellerProducts = [];

@@ -7489,65 +7489,46 @@ app.get('/api/public/live-search', async (req, reply) => {
 // ═══════════════════════════════════════════════
 app.post('/api/upload-image', async (req, reply) => {
   try {
-    const { image, nombre } = req.body || {};
-    if (!image) {
-      reply.code(400);
-      return { ok: false, error: 'Falta la imagen' };
+    const body = req.body || {};
+    const base64 = body.image || body.base64 || null;
+    if (!base64) { reply.code(400); return { ok: false, error: 'No image data' }; }
+
+    // Extraer el buffer y el tipo de imagen
+    const mimeMatch = base64.match(/^data:image\/(\w+);base64,/);
+    const ext = mimeMatch ? mimeMatch[1] : 'jpg';
+    const cleanBase64 = base64.replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(cleanBase64, 'base64');
+
+    // Generar nombre único
+    const filename = `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    
+    // Subir a Supabase Storage
+    const SUPABASE_URL = process.env.SUPABASE_URL;
+    const SUPABASE_KEY = process.env.SUPABASE_SECRET_KEY;
+    
+    const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/product-images/${filename}`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': `image/${ext}`
+      },
+      body: buffer
+    });
+
+    if (!uploadRes.ok) {
+      const err = await uploadRes.text();
+      console.error('[UPLOAD] Error Supabase:', err);
+      reply.code(500); return { ok: false, error: 'Error subiendo imagen' };
     }
 
-    // Identificar quien sube (seller o admin)
-    let sellerId = null;
-    let esAdmin = false;
-    try { const sp = requireSeller(req); if (sp && sp.sellerId) sellerId = sp.sellerId; } catch(_) {}
-    try { const ap = requireAdmin(req); if (ap) esAdmin = true; } catch(_) {}
+    const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/product-images/${filename}`;
+    console.log('[UPLOAD] ✅ Imagen subida:', publicUrl);
 
-    // Rate limit ADAPTATIVO: por sellerId según plan
-    let rateKey, limit;
-    if (sellerId) {
-      rateKey = 'seller:' + sellerId + ':upload';
-      try {
-        const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(sellerId) + '&select=plan_id');
-        const plan = seller ? await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(seller.plan_id)) : null;
-        const planId = plan ? plan.id : 'basico';
-        if (planId === 'premium') limit = 80;
-        else if (planId === 'pro') limit = 40;
-        else limit = 20;
-        app.log.info('[UPLOAD-RATE] ' + sellerId.slice(0,8) + ' plan=' + planId + ' limit=' + limit);
-      } catch(_) {
-        limit = 20;  // default basico
-      }
-    } else if (esAdmin) {
-      rateKey = 'admin:upload';
-      limit = 120;
-    } else {
-      const ip = req.headers['cf-connecting-ip'] ||
-                 req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-                 req.ip || 'desconocida';
-      rateKey = 'ip:' + ip + ':upload';
-      limit = 5;
-    }
-
-    const ahora = Date.now();
-    const entry = rateLimitMap.get(rateKey) || { count: 0, resetAt: ahora + 60000 };
-    if (ahora > entry.resetAt) {
-      entry.count = 0;
-      entry.resetAt = ahora + 60000;
-    }
-    entry.count++;
-    rateLimitMap.set(rateKey, entry);
-
-    if (entry.count > limit) {
-      reply.code(429);
-      return { ok: false, error: 'Demasiadas subidas. Espera 1 minuto.' };
-    }
-
-    const resultado = await subirImagen(image, nombre);
-    logActivity('upload_image', { url: resultado.url.slice(0, 60), sellerId });
-    return { ok: true, ...resultado };
-  } catch (e) {
-    app.log.error('Error subiendo imagen: ' + e.message);
-    reply.code(500);
-    return { ok: false, error: e.message };
+    return { ok: true, url: publicUrl };
+  } catch(e) {
+    console.error('[UPLOAD] Error:', e.message);
+    reply.code(500); return { ok: false, error: e.message };
   }
 });
 

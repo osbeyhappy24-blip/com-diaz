@@ -4692,6 +4692,61 @@ app.post('/api/admin/recategorizar', async (req, reply) => {
 });
 
 
+
+// ═══ SISTEMA DE RESEÑAS (REPUTACIÓN) ═══
+
+// 1. Obtener reseñas de un vendedor
+app.get('/api/resenas/:vendedorId', async (req, reply) => {
+  try {
+    const resenas = await dbSelect('resenas', '?vendedor_id=eq.' + encodeURIComponent(req.params.vendedorId) + '&order=created_at.desc&limit=50');
+    return { ok: true, resenas: resenas || [] };
+  } catch(e) {
+    reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
+// 2. Crear una nueva reseña
+app.post('/api/resenas', async (req, reply) => {
+  const payload = requireSeller(req); // Solo usuarios logueados pueden reseñar
+  if (!payload) { reply.code(401); return { ok: false, error: 'Debes iniciar sesión para dejar una reseña' }; }
+
+  const { producto_id, vendedor_id, calificacion, comentario } = req.body || {};
+
+  if (!calificacion || calificacion < 1 || calificacion > 5) {
+    reply.code(400); return { ok: false, error: 'La calificación debe ser entre 1 y 5 estrellas' };
+  }
+
+  try {
+    // Guardar la reseña
+    const nueva = await dbInsert('resenas', {
+      producto_id: producto_id || null,
+      vendedor_id: vendedor_id,
+      comprador_id: payload.sellerId,
+      calificacion: parseInt(calificacion),
+      comentario: sanitizarTexto(comentario || '', 500),
+      created_at: new Date().toISOString()
+    });
+
+    // Recalcular el promedio del vendedor
+    const todas = await dbSelect('resenas', '?vendedor_id=eq.' + encodeURIComponent(vendedor_id));
+    if (todas && todas.length > 0) {
+      const suma = todas.reduce((acc, r) => acc + r.calificacion, 0);
+      const promedio = (suma / todas.length).toFixed(1);
+      
+      // Actualizar el perfil del vendedor en Supabase
+      await dbUpdate('sellers', vendedor_id, {
+        reputacion: parseFloat(promedio),
+        total_resenas: todas.length
+      });
+    }
+
+    return { ok: true, resena: nueva };
+  } catch(e) {
+    reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
+
 app.post('/api/public/tienda/:slug/visita', async (req, reply) => {
   const slug = String(req.params.slug || '').toLowerCase();
   const t = (state.tiendas || []).find(x => x.slug === slug && x.activa !== false);

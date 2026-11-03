@@ -3009,7 +3009,19 @@ app.delete('/api/seller/products/:id', async (req, reply) => {
       reply.code(403); return { ok: false, error: 'No es tu producto' };
     }
     
-    await dbUpdate('seller_products', req.params.id, { activo: false, publicado: false });
+    // 🆕 Borrar imágenes de Supabase Storage (liberar espacio)
+    if (prod.imagenes && prod.imagenes.length > 0) {
+      try {
+        const borradas = await borrarImagenesDeSupabase(prod.imagenes);
+        console.log('[DELETE] Imágenes borradas de Supabase:', borradas);
+      } catch(e) { 
+        console.log('[DELETE] Error borrando imágenes:', e.message); 
+      }
+    }
+
+    // 🆕 Hard delete: borrar el producto COMPLETAMENTE de la DB
+    await dbDelete('seller_products', req.params.id);
+
     return { ok: true };
   } catch(e) {
     app.log.error('[SELLER-PRODUCT-DELETE] ' + e.message);
@@ -4395,6 +4407,34 @@ app.get('/api/public/tiendas', async () => {
 });
 
 
+
+// ═══ HELPER: Borrar imágenes de Supabase Storage ═══
+async function borrarImagenesDeSupabase(imagenes) {
+  if (!Array.isArray(imagenes) || imagenes.length === 0) return 0;
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_KEY = process.env.SUPABASE_SECRET_KEY;
+  let borradas = 0;
+  for (const url of imagenes) {
+    try {
+      // Solo borrar las que están en nuestro bucket
+      if (!url || !url.includes('/product-images/')) continue;
+      const filename = url.split('/product-images/').pop().split('?')[0];
+      if (!filename) continue;
+      const res = await fetch(`${SUPABASE_URL}/storage/v1/object/product-images/${filename}`, {
+        method: 'DELETE',
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': 'Bearer ' + SUPABASE_KEY
+        }
+      });
+      if (res.ok) borradas++;
+    } catch(e) {
+      console.log('[BORRAR-IMG] Error con ' + url + ':', e.message);
+    }
+  }
+  return borradas;
+}
+
 // ═══ AUTO-CATEGORIZACIÓN (Reglas + IA) ═══
 const REGLAS_CATEGORIAS = {
   'Instrumentos Musicales': ['guitarra', 'piano', 'bateria', 'microfono', 'violin', 'flauta', 'trompeta', 'bajo', 'amplificador', 'cuerda', 'teclado musical'],
@@ -4744,6 +4784,44 @@ app.post('/api/resenas', async (req, reply) => {
     }
 
     return { ok: true, resena: nueva };
+  } catch(e) {
+    reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
+
+
+// ═══ ENDPOINT PARA CONSULTAR CUOTA DE IMÁGENES ═══
+app.get('/api/seller/quotas', async (req, reply) => {
+  try {
+    const payload = requireSeller(req);
+    if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(payload.sellerId));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Seller no encontrado' }; }
+    
+    const plan = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(seller.plan_id || 'basico'));
+    const planNombre = (plan && plan.nombre ? plan.nombre : 'basico').toLowerCase().trim();
+    
+    const LIMITES_IMAGENES = { 'basico': 50, 'pro': 200, 'premium': -1 };
+    let limite = LIMITES_IMAGENES[planNombre] || 50;
+    try {
+      const bonus = _getBonusQuota(seller.id) || 0;
+      if (limite !== -1) limite += bonus;
+    } catch(_) {}
+    
+    const productos = await dbSelect('seller_products', '?seller_id=eq.' + encodeURIComponent(payload.sellerId) + '&activo=eq.true&select=imagenes');
+    let actuales = 0;
+    for (const p of productos || []) {
+      actuales += (p.imagenes || []).length;
+    }
+    
+    return {
+      ok: true,
+      plan: planNombre,
+      imagenes: { actuales, limite, disponible: limite === -1 ? 'ilimitado' : (limite - actuales) },
+      productos: { total: (productos || []).length }
+    };
   } catch(e) {
     reply.code(500); return { ok: false, error: e.message };
   }
@@ -7489,29 +7567,93 @@ app.get('/api/public/live-search', async (req, reply) => {
 // ═══════════════════════════════════════════════
 app.post('/api/upload-image', async (req, reply) => {
   try {
+    const payload = requireSeller(req);
+    if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+    // ═══ 1. VERIFICAR CUOTA DE IMÁGENES SEGÚN PLAN ═══
+    let quotaInfo = { actuales: 0, limite: -1 };
+    try {
+      const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(payload.sellerId));
+      if (seller) {
+        const plan = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(seller.plan_id || 'basico'));
+        const planNombre = (plan && plan.nombre ? plan.nombre : 'basico').toLowerCase().trim();
+        
+        // Límites por plan (imágenes totales, no productos)
+        const LIMITES_IMAGENES = { 'basico': 50, 'pro': 200, 'premium': -1 };
+        let limite = LIMITES_IMAGENES[planNombre];
+        if (limite === undefined) limite = 50; // fallback
+        
+        // Sumar bonus por referidos
+        try {
+          const bonus = _getBonusQuota(seller.id) || 0;
+          if (limite !== -1) limite += bonus;
+        } catch(_) {}
+        
+        // Contar imágenes actuales del seller
+        const productos = await dbSelect('seller_products', '?seller_id=eq.' + encodeURIComponent(payload.sellerId) + '&activo=eq.true&select=imagenes');
+        let actuales = 0;
+        for (const p of productos || []) {
+          actuales += (p.imagenes || []).length;
+        }
+        
+        quotaInfo = { actuales, limite, plan: planNombre };
+        
+        if (limite !== -1 && actuales >= limite) {
+          reply.code(429);
+          return { 
+            ok: false, 
+            error: 'Límite de imágenes alcanzado (' + actuales + '/' + limite + '). Actualiza tu plan para subir más.',
+            actuales, limite, plan: planNombre
+          };
+        }
+      }
+    } catch(e) {
+      console.log('[QUOTA] Error verificando:', e.message);
+      // Si falla la verificación, permitir (mejor que bloquear sin razón)
+    }
+
+    // ═══ 2. OBTENER IMAGEN ═══
     const body = req.body || {};
     const base64 = body.image || body.base64 || null;
     if (!base64) { reply.code(400); return { ok: false, error: 'No image data' }; }
 
-    // Extraer el buffer y el tipo de imagen
-    const mimeMatch = base64.match(/^data:image\/(\w+);base64,/);
-    const ext = mimeMatch ? mimeMatch[1] : 'jpg';
     const cleanBase64 = base64.replace(/^data:image\/\w+;base64,/, '');
-    const buffer = Buffer.from(cleanBase64, 'base64');
+    const originalBuffer = Buffer.from(cleanBase64, 'base64');
+    const originalKB = Math.round(originalBuffer.length / 1024);
 
-    // Generar nombre único
-    const filename = `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    // ═══ 3. COMPRIMIR CON SHARP (con fallback) ═══
+    let buffer = originalBuffer;
+    let ext = 'jpg';
+    let comprimido = false;
     
-    // Subir a Supabase Storage
+    try {
+      const sharp = (await import('sharp')).default;
+      buffer = await sharp(originalBuffer)
+        .rotate()  // Corregir EXIF (fotos de iPhone)
+        .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 82 })
+        .toBuffer();
+      ext = 'webp';
+      comprimido = true;
+    } catch(e) {
+      console.log('[SHARP] No disponible, usando original:', e.message);
+    }
+    
+    const finalKB = Math.round(buffer.length / 1024);
+    const ratio = originalKB > 0 ? Math.round((1 - finalKB / originalKB) * 100) : 0;
+    console.log('[UPLOAD] ' + originalKB + 'KB → ' + finalKB + 'KB (' + ratio + '% ahorro, ' + (comprimido ? 'webp' : 'original') + ')');
+
+    // ═══ 4. SUBIR A SUPABASE STORAGE ═══
+    const filename = 'img_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8) + '.' + ext;
     const SUPABASE_URL = process.env.SUPABASE_URL;
     const SUPABASE_KEY = process.env.SUPABASE_SECRET_KEY;
     
-    const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/product-images/${filename}`, {
+    const uploadRes = await fetch(SUPABASE_URL + '/storage/v1/object/product-images/' + filename, {
       method: 'POST',
       headers: {
         'apikey': SUPABASE_KEY,
         'Authorization': 'Bearer ' + SUPABASE_KEY,
-        'Content-Type': `image/${ext}`
+        'Content-Type': 'image/' + ext
       },
       body: buffer
     });
@@ -7522,10 +7664,18 @@ app.post('/api/upload-image', async (req, reply) => {
       reply.code(500); return { ok: false, error: 'Error subiendo imagen' };
     }
 
-    const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/product-images/${filename}`;
-    console.log('[UPLOAD] ✅ Imagen subida:', publicUrl);
+    const publicUrl = SUPABASE_URL + '/storage/v1/object/public/product-images/' + filename;
+    console.log('[UPLOAD] ✅ ' + publicUrl);
 
-    return { ok: true, url: publicUrl };
+    return { 
+      ok: true, 
+      url: publicUrl,
+      comprimido,
+      original_kb: originalKB,
+      final_kb: finalKB,
+      ahorro_pct: ratio,
+      quota: quotaInfo
+    };
   } catch(e) {
     console.error('[UPLOAD] Error:', e.message);
     reply.code(500); return { ok: false, error: e.message };

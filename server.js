@@ -4828,6 +4828,89 @@ app.get('/api/seller/quotas', async (req, reply) => {
 });
 
 
+
+// ═══ SISTEMA DE PEDIDOS CON CÓDIGO ÚNICO ═══
+// Cuando un cliente toca "Pedir por WhatsApp", se crea un pedido con código único.
+// El comprador recibe el código al recibir el producto y con él desbloquea la reseña.
+
+app.post('/api/pedidos/crear', async (req, reply) => {
+  try {
+    const { producto_id } = req.body || {};
+    if (!producto_id) { reply.code(400); return { ok: false, error: 'Falta producto_id' }; }
+
+    // Obtener producto
+    const prod = await dbSelectOne('seller_products', '?id=eq.' + encodeURIComponent(producto_id));
+    if (!prod) { reply.code(404); return { ok: false, error: 'Producto no encontrado' }; }
+
+    // Generar código único (PED-XXXXXX)
+    const codigo = 'PED-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
+
+    const pedido = {
+      codigo: codigo,
+      producto_id: producto_id,
+      titulo: prod.titulo,
+      precio: prod.precio_usd,
+      seller_id: prod.seller_id,
+      comprador_ip: (req.headers['x-forwarded-for'] || req.ip || '').split(',')[0],
+      estado: 'pendiente_confirmacion',
+      created_at: new Date().toISOString(),
+      confirmado: false,
+      resena_dejada: false
+    };
+
+    // Guardar en state (persistente en Supabase Storage)
+    if (!state.pedidos) state.pedidos = [];
+    state.pedidos.push(pedido);
+    // Mantener solo los últimos 1000 pedidos
+    if (state.pedidos.length > 1000) state.pedidos = state.pedidos.slice(-1000);
+    await save();
+
+    return { ok: true, codigo: codigo, pedido: pedido };
+  } catch(e) {
+    reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
+// ═══ ENDPOINT: Confirmar pedido con código ═══
+app.post('/api/pedidos/confirmar', async (req, reply) => {
+  try {
+    const { codigo } = req.body || {};
+    if (!codigo) { reply.code(400); return { ok: false, error: 'Falta código' }; }
+
+    const pedido = (state.pedidos || []).find(p => p.codigo === codigo);
+    if (!pedido) { reply.code(404); return { ok: false, error: 'Código inválido o no existe' }; }
+    if (pedido.confirmado) { reply.code(400); return { ok: false, error: 'Este pedido ya fue confirmado' }; }
+
+    pedido.confirmado = true;
+    pedido.estado = 'confirmado';
+    pedido.confirmado_at = new Date().toISOString();
+    await save();
+
+    return { ok: true, mensaje: 'Pedido confirmado. ¡Ya puedes dejar tu reseña!' };
+  } catch(e) {
+    reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
+// ═══ ENDPOINT: Verificar si un código permite dejar reseña ═══
+app.get('/api/pedidos/verificar/:codigo', async (req, reply) => {
+  try {
+    const codigo = req.params.codigo;
+    const pedido = (state.pedidos || []).find(p => p.codigo === codigo);
+    if (!pedido) { reply.code(404); return { ok: false, error: 'Código no existe' }; }
+
+    return {
+      ok: true,
+      valido: pedido.confirmado && !pedido.resena_dejada,
+      pedido: pedido,
+      mensaje: pedido.confirmado ? (pedido.resena_dejada ? 'Ya dejaste reseña' : 'Puedes dejar reseña') : 'Pedido pendiente de confirmar'
+    };
+  } catch(e) {
+    reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
+
 app.post('/api/public/tienda/:slug/visita', async (req, reply) => {
   const slug = String(req.params.slug || '').toLowerCase();
   const t = (state.tiendas || []).find(x => x.slug === slug && x.activa !== false);

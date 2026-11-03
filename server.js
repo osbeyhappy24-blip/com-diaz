@@ -4841,7 +4841,15 @@ app.get('/api/public/tienda/:slug', async (req, reply) => {
 });
 
 // Ver producto individual (público)
-app.get('/api/public/producto/:id', async (req, reply) => {
+
+  // 🆕 Buscar el WhatsApp del dueño del producto (para que el pedido llegue al vendedor correcto)
+  let whatsappVendedor = null;
+  try {
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(producto.seller_id));
+    if (seller) whatsappVendedor = seller.whatsapp || seller.telefono || null;
+  } catch(e) { console.log('[WA] Error buscando seller:', e.message); }
+
+  app.get('/api/public/producto/:id', async (req, reply) => {
   const id = req.params.id;
   
   // Validar UUID para evitar 500 de Supabase
@@ -4867,7 +4875,7 @@ app.get('/api/public/producto/:id', async (req, reply) => {
     let seller = null;
     let tienda = null;
     try {
-      seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(prod.seller_id) + '&select=id,nombre');
+      seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(prod.seller_id) + '&select=id,nombre,whatsapp,telefono');
       if (seller) {
         tienda = (state.tiendas || []).find(t => t.seller_id === seller.id) || null;
       }
@@ -4875,6 +4883,7 @@ app.get('/api/public/producto/:id', async (req, reply) => {
     
     return {
       ok: true,
+      whatsapp_vendedor: (seller && (seller.whatsapp || seller.telefono)) || null,
       producto: {
         id: prod.id,
         titulo: prod.titulo,

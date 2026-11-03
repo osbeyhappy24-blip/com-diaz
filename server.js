@@ -2917,8 +2917,8 @@ app.post('/api/seller/products', async (req, reply) => {
     }
     
     // Auto-categorizar si no viene categoría
-      if (!categoria && titulo) {
-        categoria = await categorizarAutomaticamente(titulo);
+      if (!body.categoria && body.titulo) {
+        body.categoria = await categorizarAutomaticamente(body.titulo);
       }
       const nuevo = await dbInsert('seller_products', {
         ganga_activa: body.ganga_activa || false,

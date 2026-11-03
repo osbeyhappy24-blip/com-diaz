@@ -4990,7 +4990,9 @@ app.get('/api/public/tienda/:slug', async (req, reply) => {
       logo: tienda.logo,
       banner: tienda.banner,
       color: tienda.color,
-      whatsapp: tienda.whatsapp,
+      whatsapp: tienda.whatsapp || (await (async () => {
+        try { const _s = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(tienda.seller_id) + '&select=telefono'); return _s && _s.telefono; } catch(_) { return null; }
+      })()),
       seller_id: tienda.seller_id,   // <-- AÑADIR ESTO
       visitas: tienda.visitas || 0,
       esVerificado: esVerificado, // <-- NUEVO CAMPO
@@ -5036,7 +5038,7 @@ app.get('/api/public/tienda/:slug', async (req, reply) => {
     let seller = null;
     let tienda = null;
     try {
-      seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(prod.seller_id) + '&select=id,nombre,whatsapp,telefono');
+      seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(prod.seller_id) + '&select=id,nombre,telefono');
       if (seller) {
         tienda = (state.tiendas || []).find(t => t.seller_id === seller.id) || null;
       }
@@ -5044,7 +5046,7 @@ app.get('/api/public/tienda/:slug', async (req, reply) => {
     
     return {
       ok: true,
-      whatsapp_vendedor: (seller && (seller.whatsapp || seller.telefono)) || null,
+      whatsapp_vendedor: (seller && seller.telefono) || null,
       producto: {
         id: prod.id,
         titulo: prod.titulo,

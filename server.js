@@ -4801,32 +4801,26 @@ app.get('/api/public/tienda/:slug', async (req, reply) => {
   const categorias = [...new Set(productos.map(p => p.categoria).filter(Boolean))];
 
   // 🛡️ Lógica de Vendedor Verificado
+  // 🛡️ Lógica de Vendedor Verificado (Simplificada)
   let esVerificado = false;
   try {
-    // Asegurar que tienda.seller_id exista (si no, buscar por el slug en state.tiendas)
     let sellerId = tienda.seller_id;
     if (!sellerId) {
       const tiendaEnState = (state.tiendas || []).find(t => t.slug === slug);
       sellerId = tiendaEnState ? tiendaEnState.seller_id : null;
     }
-    if (!sellerId) throw new Error('seller_id no encontrado para la tienda');
-    
-    const sellerData = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(sellerId));
-    if (sellerData && sellerData.estado === 'aprobado' && sellerData.activo === true) {
-      // Verificar si tiene reseñas y buen promedio
-      const resenas = await dbSelect('resenas', '?vendedor_id=eq.' + encodeURIComponent(tienda.seller_id));
-      const totalResenas = resenas ? resenas.length : 0;
-      const promedio = totalResenas > 0 ? (resenas.reduce((a, b) => a + b.calificacion, 0) / totalResenas) : 0;
-      
-      // Regla: Tiene al menos 1 producto Y (tiene 3+ reseñas con 4.0+ estrellas O es nuevo pero tiene WhatsApp)
-      // Si no tiene whatsapp guardado, usar el teléfono como respaldo
-      const tieneContacto = sellerData.whatsapp || sellerData.telefono;
-      
-      if (totalProductos > 0 && (promedio >= 4.0 || (totalResenas === 0 && tieneContacto))) {
-        esVerificado = true;
+    if (sellerId) {
+      const sellerData = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(sellerId));
+      if (sellerData && sellerData.estado === 'aprobado' && sellerData.activo === true) {
+        const tieneContacto = sellerData.whatsapp || sellerData.telefono;
+        if (totalProductos > 0 && tieneContacto) {
+          esVerificado = true;
+        }
       }
     }
-  } catch(e) { console.log('Error verificando seller:', e.message); }
+  } catch(e) { 
+    app.log.error('[VERIFICADO] Error: ' + e.message); 
+  }
   
   return {
     ok: true,

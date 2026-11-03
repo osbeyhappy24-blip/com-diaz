@@ -4811,7 +4811,10 @@ app.get('/api/public/tienda/:slug', async (req, reply) => {
       const promedio = totalResenas > 0 ? (resenas.reduce((a, b) => a + b.calificacion, 0) / totalResenas) : 0;
       
       // Regla: Tiene al menos 1 producto Y (tiene 3+ reseñas con 4.0+ estrellas O es nuevo pero tiene WhatsApp)
-      if (totalProductos > 0 && (promedio >= 4.0 || (totalResenas === 0 && sellerData.whatsapp))) {
+      // Si no tiene whatsapp guardado, usar el teléfono como respaldo
+      const tieneContacto = sellerData.whatsapp || sellerData.telefono;
+      
+      if (totalProductos > 0 && (promedio >= 4.0 || (totalResenas === 0 && tieneContacto))) {
         esVerificado = true;
       }
     }

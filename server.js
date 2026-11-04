@@ -7719,25 +7719,12 @@ app.post('/api/upload-image', async (req, reply) => {
     const originalBuffer = Buffer.from(cleanBase64, 'base64');
     const originalKB = Math.round(originalBuffer.length / 1024);
 
-    // ═══ 3. COMPRIMIR CON SHARP (con fallback) ═══
+    // ═══ 3. SUBIR DIRECTO (sin sharp para evitar errores 500 en Render) ═══
     let buffer = originalBuffer;
     let ext = 'jpg';
     let comprimido = false;
-    
-    try {
-      const sharp = (await import('sharp')).default;
-      buffer = await sharp(originalBuffer)
-        .rotate()  // Corregir EXIF (fotos de iPhone)
-        .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 82 })
-        .toBuffer();
-      ext = 'webp';
-      comprimido = true;
-    } catch(e) {
-      console.log('[SHARP] No disponible, usando original:', e.message);
-    }
-    
     const finalKB = Math.round(buffer.length / 1024);
+
     const ratio = originalKB > 0 ? Math.round((1 - finalKB / originalKB) * 100) : 0;
     console.log('[UPLOAD] ' + originalKB + 'KB → ' + finalKB + 'KB (' + ratio + '% ahorro, ' + (comprimido ? 'webp' : 'original') + ')');
 

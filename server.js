@@ -3020,8 +3020,8 @@ app.delete('/api/seller/products/:id', async (req, reply) => {
       }
     }
 
-    // Borrar de la base de datos
-    await dbDelete('seller_products', '?id=eq.' + encodeURIComponent(req.params.id));
+    // CORRECCIÓN: Usar dbDelete con el filtro correcto (sin el ? inicial)
+    await dbDelete('seller_products', 'id=eq.' + encodeURIComponent(req.params.id));
     
     return { ok: true, message: 'Producto eliminado correctamente' };
   } catch(e) {

@@ -3005,32 +3005,29 @@ app.delete('/api/seller/products/:id', async (req, reply) => {
     
     const prod = await dbSelectOne('seller_products', '?id=eq.' + encodeURIComponent(req.params.id));
     if (!prod) { reply.code(404); return { ok: false, error: 'Producto no encontrado' }; }
+    
     if (prod.seller_id !== payload.sellerId) {
       reply.code(403); return { ok: false, error: 'No es tu producto' };
     }
-    
-    // 🆕 Borrar imágenes de Supabase Storage (liberar espacio)
+
+    // Intentar borrar imágenes (ignorar errores si no existen)
     if (prod.imagenes && prod.imagenes.length > 0) {
       try {
         const borradas = await borrarImagenesDeSupabase(prod.imagenes);
         console.log('[DELETE] Imágenes borradas de Supabase:', borradas);
-      } catch(e) { 
-        console.log('[DELETE] Error borrando imágenes:', e.message); 
+      } catch(e) {
+        console.log('[DELETE] Error borrando imágenes (ignorado):', e.message);
       }
     }
 
-    // 🆕 Soft delete: mover a la papelera de reciclaje (no borrar de la DB)
-    await dbUpdate('seller_products', req.params.id, { 
-      activo: false, 
-      publicado: false, 
-      deleted_at: new Date().toISOString() 
-    });
-
-    return { ok: true };
+    // Borrar de la base de datos
+    await dbDelete('seller_products', '?id=eq.' + encodeURIComponent(req.params.id));
+    
+    return { ok: true, message: 'Producto eliminado correctamente' };
   } catch(e) {
-    app.log.error('[SELLER-PRODUCT-DELETE] ' + e.message);
-    reply.code(500);
-    return { ok: false, error: e.message };
+    console.error('[DELETE] Error fatal:', e);
+    reply.code(500); 
+    return { ok: false, error: e.message || 'Error interno del servidor' };
   }
 });
 

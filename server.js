@@ -7719,11 +7719,15 @@ app.post('/api/upload-image', async (req, reply) => {
     const originalBuffer = Buffer.from(cleanBase64, 'base64');
     const originalKB = Math.round(originalBuffer.length / 1024);
 
-    // ═══ 3. SUBIR DIRECTO (sin sharp para evitar errores 500 en Render) ═══
+    // ═══ 3. SUBIR DIRECTO (sin sharp) ═══
+    // Detectar el tipo MIME real del base64
+    const mimeMatch = base64.match(/^data:image\/(\w+);base64,/);
+    let ext = mimeMatch ? mimeMatch[1] : 'jpg';
+    if (ext === 'jpeg') ext = 'jpg';
     let buffer = originalBuffer;
-    let ext = 'jpg';
     let comprimido = false;
     const finalKB = Math.round(buffer.length / 1024);
+    console.log('[UPLOAD] Tipo detectado:', ext, '| Tamano:', finalKB + 'KB');
 
     const ratio = originalKB > 0 ? Math.round((1 - finalKB / originalKB) * 100) : 0;
     console.log('[UPLOAD] ' + originalKB + 'KB → ' + finalKB + 'KB (' + ratio + '% ahorro, ' + (comprimido ? 'webp' : 'original') + ')');

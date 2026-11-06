@@ -7760,7 +7760,7 @@ app.post('/api/upload-image', async (req, reply) => {
       headers: {
         'apikey': SUPABASE_KEY,
         'Authorization': 'Bearer ' + SUPABASE_KEY,
-        'Content-Type': 'image/' + ext
+        'Content-Type': ext === 'jpg' ? 'image/jpeg' : ('image/' + ext)
       },
       body: buffer
     });

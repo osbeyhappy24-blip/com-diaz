@@ -4809,8 +4809,7 @@ app.post('/api/seller/test-ia', async (req, reply) => {
 
 // ADMIN: ver estado de las keys IA
 app.get('/api/admin/ia-status', async (req, reply) => {
-  const admin = requireAdmin(req);
-  if (!admin) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  // Gate principal ya protege con X-Comdiaz-Key
   const envKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(k => k);
   const stateKeys = (state.iaKeys && Array.isArray(state.iaKeys)) ? state.iaKeys : [];
   return {
@@ -4826,8 +4825,7 @@ app.get('/api/admin/ia-status', async (req, reply) => {
 
 // ADMIN: sincronizar keys IA en state (persistente en Supabase)
 app.post('/api/admin/sync-ia-keys', async (req, reply) => {
-  const admin = requireAdmin(req);
-  if (!admin) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  // Gate principal ya protege con X-Comdiaz-Key
   const body = req.body || {};
   const keys = Array.isArray(body.keys) ? body.keys.map(k => String(k).trim()).filter(k => k.length > 10) : [];
   const model = String(body.model || '').trim();

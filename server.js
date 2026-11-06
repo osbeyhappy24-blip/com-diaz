@@ -2679,6 +2679,12 @@ app.post('/api/seller/register', async (req, reply) => {
       activo: true,
       cuota_usada: 0,
     });
+    
+    // Generar token para que el frontend pueda entrar al panel directamente
+    let token = null;
+    if (nuevo && nuevo.id) {
+      token = createJWT({ tipo: 'seller', sellerId: nuevo.id, telefono: nuevo.telefono });
+    }
 
     // ── Crear referral record + notificar al referente ──
     if (nuevo && nuevo.id) {
@@ -2746,7 +2752,7 @@ app.post('/api/seller/register', async (req, reply) => {
       msgEstado
     ).catch(() => {});
     
-    return { ok: true, seller: { id: nuevo.id, nombre: nuevo.nombre, telefono: nuevo.telefono, estado: nuevo.estado } };
+    return { ok: true, token, seller: { id: nuevo.id, nombre: nuevo.nombre, telefono: nuevo.telefono, estado: nuevo.estado } };
   } catch(e) {
     app.log.error('[SELLER-REGISTER] ' + e.message);
     reply.code(500);

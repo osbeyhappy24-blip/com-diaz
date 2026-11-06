@@ -4626,7 +4626,11 @@ Responde SOLO el JSON, sin markdown.`;
 
   const payload = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { maxOutputTokens: 800, temperature: 0.7 },
+    generationConfig: {
+      maxOutputTokens: 2000,
+      temperature: 0.7,
+      thinkingConfig: { thinkingBudget: 0 }
+    },
     safetySettings: [
       { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
       { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -4635,10 +4639,10 @@ Responde SOLO el JSON, sin markdown.`;
     ]
   };
 
-  const maxIntentos = Math.max(GEMINI_KEYS.length * 2, 6);
+  const maxIntentos = Math.max(getIAKeys().length * 2, 6);
   for (let i = 0; i < maxIntentos; i++) {
-    const apiKey = getNextKey() || process.env.GEMINI_API_KEY;
-    if (!apiKey) { console.log('[IA] No hay keys configuradas'); break; }
+    const apiKey = getNextKey();
+    if (!apiKey) { console.log('[IA] No hay keys'); break; }
     try {
       const ctrl = new AbortController();
       const to = setTimeout(() => ctrl.abort(), 30000);
@@ -4650,13 +4654,10 @@ Responde SOLO el JSON, sin markdown.`;
       });
       clearTimeout(to);
 
-      if (res.status === 429) {
-        console.log(`[IA] 429 agotada, rotando (intento ${i+1}/${maxIntentos})`);
-        continue;
-      }
+      if (res.status === 429) { console.log(`[IA] 429 intento ${i+1}`); continue; }
       if (res.status === 503 || res.status === 502) {
         const wait = Math.min(2000 * Math.pow(2, Math.floor(i/2)), 8000);
-        console.log(`[IA] ${res.status} transitorio, esperando ${wait}ms (intento ${i+1}/${maxIntentos})`);
+        console.log(`[IA] ${res.status} reintento en ${wait}ms`);
         await new Promise(r => setTimeout(r, wait));
         continue;
       }
@@ -4667,28 +4668,24 @@ Responde SOLO el JSON, sin markdown.`;
       }
 
       const data = await res.json();
-      const cand = data && data.candidates && data.candidates[0];
-      if (!cand) {
-        console.log('[IA] Sin candidates:', JSON.stringify(data.promptFeedback || {}).slice(0, 200));
-        continue;
-      }
-      if (cand.finishReason === 'SAFETY') {
-        console.log('[IA] SAFETY block para:', titulo.slice(0, 40));
-        return null;
-      }
-      const parts = cand.content && cand.content.parts;
-      if (!parts || !parts[0] || !parts[0].text) {
-        console.log('[IA] Sin texto. finishReason:', cand.finishReason);
-        continue;
-      }
+      const cand = data?.candidates?.[0];
+      if (!cand) { console.log('[IA] Sin candidates. promptFeedback:', JSON.stringify(data.promptFeedback || {}).slice(0, 200)); continue; }
+      if (cand.finishReason === 'SAFETY') { console.log('[IA] SAFETY:', titulo.slice(0, 40)); return null; }
+      if (cand.finishReason === 'MAX_TOKENS') { console.log('[IA] MAX_TOKENS (subir maxOutputTokens):', titulo.slice(0, 40)); continue; }
+      const parts = cand.content?.parts;
+      if (!parts || !parts[0]?.text) { console.log('[IA] Sin texto. finishReason:', cand.finishReason, 'content:', JSON.stringify(cand.content || {}).slice(0, 150)); continue; }
       const text = parts[0].text;
+      console.log('[IA] Respuesta OK (' + text.length + ' chars):', text.slice(0, 80));
       const jm = text.match(/\{[\s\S]*\}/);
-      if (!jm) {
-        console.log('[IA] Sin JSON en respuesta:', text.slice(0, 150));
-        continue;
-      }
-      try { return JSON.parse(jm[0]); }
-      catch(pe) {
+      if (!jm) { console.log('[IA] Sin JSON en respuesta'); continue; }
+      try {
+        const parsed = JSON.parse(jm[0]);
+        if (!parsed.titulo && !parsed.descripcion) {
+          console.log('[IA] JSON vacío:', JSON.stringify(parsed));
+          continue;
+        }
+        return parsed;
+      } catch(pe) {
         console.log('[IA] JSON inválido:', pe.message, '→', jm[0].slice(0, 150));
         continue;
       }
@@ -4810,6 +4807,47 @@ app.post('/api/seller/test-ia', async (req, reply) => {
 });
 
 // ADMIN: ver estado de las keys IA
+// ADMIN: test raw con prompt real (para ver qué devuelve Gemini)
+app.post('/api/admin/ia-test-raw', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  if (String(payload.telefono) !== '5358980267') { reply.code(403); return { ok: false, error: 'Solo admin' }; }
+
+  const body = req.body || {};
+  const titulo = String(body.titulo || 'Guitarra Electroacústica');
+  const descripcion = String(body.descripcion || '');
+  const prompt = `Eres un vendedor cubano experto. Optimiza este producto:
+Título actual: "${titulo}"
+Descripción actual: "${descripcion || 'sin descripción'}"
+
+Devuelve un JSON estricto con este formato:
+{"titulo": "Título mejorado (máx 60 caracteres)", "descripcion": "Descripción persuasiva 2-3 líneas", "categoria": "Categoría"}
+
+Responde SOLO el JSON, sin markdown.`;
+
+  const key = getNextKey();
+  if (!key) return { ok: false, error: 'Sin keys' };
+
+  try {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 30000);
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${getIAModel()}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 2000, temperature: 0.7, thinkingConfig: { thinkingBudget: 0 } }
+      }),
+      signal: ctrl.signal
+    });
+    clearTimeout(to);
+    const data = await res.json();
+    return { ok: res.ok, status: res.status, keyUsed: key.slice(0, 20) + '...', raw: data };
+  } catch(e) {
+    return { ok: false, error: e.name + ': ' + e.message };
+  }
+});
+
 app.get('/api/admin/ia-status', async (req, reply) => {
   const payload = requireSeller(req);
   if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }

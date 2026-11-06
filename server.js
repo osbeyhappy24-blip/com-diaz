@@ -2872,6 +2872,86 @@ app.get('/api/seller/me', async (req, reply) => {
   }
 });
 
+// POST: cambiar contraseña (seller autenticado)
+app.post('/api/seller/password', async (req, reply) => {
+  try {
+    const payload = requireSeller(req);
+    if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+    const { actual, nueva } = req.body || {};
+    if (!actual || !nueva) {
+      reply.code(400); return { ok: false, error: 'Falta contraseña actual o nueva' };
+    }
+    if (String(nueva).length < 6) {
+      reply.code(400); return { ok: false, error: 'La nueva contraseña debe tener al menos 6 caracteres' };
+    }
+    if (String(nueva) === String(actual)) {
+      reply.code(400); return { ok: false, error: 'La nueva contraseña debe ser diferente a la actual' };
+    }
+
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(payload.sellerId));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Cuenta no existe' }; }
+
+    if (!verifyPassword(String(actual), seller.password_hash)) {
+      reply.code(401); return { ok: false, error: 'Contraseña actual incorrecta' };
+    }
+
+    const password_hash = hashPassword(String(nueva));
+    await dbUpdate('sellers', seller.id, { password_hash });
+
+    return { ok: true, mensaje: 'Contraseña actualizada correctamente' };
+  } catch(e) {
+    app.log.error('[SELLER-PASSWORD] ' + e.message);
+    reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
+// PUT: actualizar WhatsApp del seller (= su teléfono de login)
+app.put('/api/seller/me', async (req, reply) => {
+  try {
+    const payload = requireSeller(req);
+    if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+    const { whatsapp, password } = req.body || {};
+    if (!whatsapp) {
+      reply.code(400); return { ok: false, error: 'Falta nuevo WhatsApp' };
+    }
+    if (!password) {
+      reply.code(400); return { ok: false, error: 'Debes confirmar tu contraseña para cambiar WhatsApp' };
+    }
+
+    const nuevoTel = normalizarTelefono(whatsapp);
+    if (!nuevoTel || nuevoTel.length < 6) {
+      reply.code(400); return { ok: false, error: 'WhatsApp inválido' };
+    }
+
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(payload.sellerId));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Cuenta no existe' }; }
+
+    if (!verifyPassword(String(password), seller.password_hash)) {
+      reply.code(401); return { ok: false, error: 'Contraseña incorrecta' };
+    }
+
+    if (String(seller.telefono) === String(nuevoTel)) {
+      reply.code(400); return { ok: false, error: 'El WhatsApp es el mismo que ya tienes' };
+    }
+
+    const existing = await dbSelectOne('sellers', '?telefono=eq.' + encodeURIComponent(nuevoTel));
+    if (existing && existing.id !== seller.id) {
+      reply.code(409); return { ok: false, error: 'Ese WhatsApp ya está registrado en otra cuenta' };
+    }
+
+    await dbUpdate('sellers', seller.id, { telefono: nuevoTel });
+    const nuevoToken = createJWT({ sellerId: seller.id, tipo: 'seller', telefono: nuevoTel });
+
+    return { ok: true, mensaje: 'WhatsApp actualizado. Debes iniciar sesión de nuevo.', token: nuevoToken, telefono: nuevoTel };
+  } catch(e) {
+    app.log.error('[SELLER-ME-PUT] ' + e.message);
+    reply.code(500); return { ok: false, error: e.message };
+  }
+});
+
+
 app.get('/health', async () => ({ ok: true, service: 'comdiaz', ts: Date.now() }));
 
 app.get('/api/state', async () => state);

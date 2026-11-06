@@ -4617,11 +4617,14 @@ Responde SOLO el JSON, sin markdown.`;
     if (!apiKey) break;
 
     try {
+      const _ctrlIA = new AbortController();
+      const _toIA = setTimeout(() => _ctrlIA.abort(), 25000);
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-      });
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+        signal: _ctrlIA.signal
+      }).finally(() => clearTimeout(_toIA));
       
       if (res.status === 429) {
         console.log(`[IA] Llave agotada (429). Rotando a la siguiente...`);
@@ -4696,20 +4699,20 @@ app.post('/api/seller/iniciar-mejora-ia', async (req, reply) => {
     return ultimaEdicion > ultimaOptimizacion; // El producto se editó después de la última optimización
   });
 
-  if (productosPendientes.length === 0) return { ok: false, error: 'Todos tus productos ya están optimizados por la IA' };
-  if (!productos || productos.length === 0) return { ok: false, error: 'No tienes productos para procesar' };
+  if (!productos || productos.length === 0) return { ok: false, error: 'No tienes productos publicados en tu tienda' };
+  if (productosPendientes.length === 0) return { ok: false, error: 'Todos tus productos publicados ya fueron optimizados por la IA' };
 
   const existing = iaJobs.get(payload.sellerId);
-  if (existing && existing.estado === 'procesando') {
+  if (existing && (existing.estado === 'procesando' || existing.estado === 'en_cola')) {
     return { ok: true, job: existing, mensaje: 'Ya está en proceso' };
   }
 
   const job = {
     sellerId: payload.sellerId,
     estado: 'en_cola',
-    total: productos.length,
+    total: productosPendientes.length,
     procesados: 0,
-    productos,
+    productos: productosPendientes,
     creadoEn: Date.now()
   };
   iaJobs.set(payload.sellerId, job);

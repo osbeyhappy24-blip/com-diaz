@@ -4610,39 +4610,81 @@ Devuelve un JSON estricto con este formato:
 
 Responde SOLO el JSON, sin markdown.`;
 
-  const maxIntentos = GEMINI_KEYS.length || 1;
-  
+  const payload = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { maxOutputTokens: 800, temperature: 0.7 },
+    safetySettings: [
+      { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+      { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+      { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+      { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+    ]
+  };
+
+  const maxIntentos = Math.max(GEMINI_KEYS.length * 2, 6);
   for (let i = 0; i < maxIntentos; i++) {
     const apiKey = getNextKey() || process.env.GEMINI_API_KEY;
-    if (!apiKey) break;
-
+    if (!apiKey) { console.log('[IA] No hay keys configuradas'); break; }
     try {
-      const _ctrlIA = new AbortController();
-      const _toIA = setTimeout(() => _ctrlIA.abort(), 25000);
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent`, {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 30000);
+      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-        signal: _ctrlIA.signal
-      }).finally(() => clearTimeout(_toIA));
-      
+        body: JSON.stringify(payload),
+        signal: ctrl.signal
+      });
+      clearTimeout(to);
+
       if (res.status === 429) {
-        console.log(`[IA] Llave agotada (429). Rotando a la siguiente...`);
+        console.log(`[IA] 429 agotada, rotando (intento ${i+1}/${maxIntentos})`);
         continue;
       }
-      
+      if (res.status === 503 || res.status === 502) {
+        const wait = Math.min(2000 * Math.pow(2, Math.floor(i/2)), 8000);
+        console.log(`[IA] ${res.status} transitorio, esperando ${wait}ms (intento ${i+1}/${maxIntentos})`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        console.log(`[IA] HTTP ${res.status}: ${txt.slice(0, 150)}`);
+        continue;
+      }
+
       const data = await res.json();
-      if (data.candidates) {
-        const text = data.candidates[0].content.parts[0].text;
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) return JSON.parse(jsonMatch[0]);
+      const cand = data && data.candidates && data.candidates[0];
+      if (!cand) {
+        console.log('[IA] Sin candidates:', JSON.stringify(data.promptFeedback || {}).slice(0, 200));
+        continue;
+      }
+      if (cand.finishReason === 'SAFETY') {
+        console.log('[IA] SAFETY block para:', titulo.slice(0, 40));
+        return null;
+      }
+      const parts = cand.content && cand.content.parts;
+      if (!parts || !parts[0] || !parts[0].text) {
+        console.log('[IA] Sin texto. finishReason:', cand.finishReason);
+        continue;
+      }
+      const text = parts[0].text;
+      const jm = text.match(/\{[\s\S]*\}/);
+      if (!jm) {
+        console.log('[IA] Sin JSON en respuesta:', text.slice(0, 150));
+        continue;
+      }
+      try { return JSON.parse(jm[0]); }
+      catch(pe) {
+        console.log('[IA] JSON inválido:', pe.message, '→', jm[0].slice(0, 150));
+        continue;
       }
     } catch(e) {
-      console.log(`[IA] Error con esta llave: ${e.message}. Rotando...`);
+      console.log(`[IA] Excepción (${e.name}):`, e.message);
     }
   }
   return null;
 }
+
 
 async function procesarMejoraIA(sellerId) {
   const job = iaJobs.get(sellerId);
@@ -4724,6 +4766,35 @@ app.post('/api/seller/iniciar-mejora-ia', async (req, reply) => {
 });
 
 // Endpoint para estado
+// DEBUG: probar Gemini directamente (solo seller autenticado)
+app.post('/api/seller/test-ia', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  const apiKey = getNextKey() || process.env.GEMINI_API_KEY;
+  if (!apiKey) return { ok: false, error: 'No hay keys configuradas' };
+  try {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 30000);
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: 'Responde solo la palabra OK' }] }],
+        generationConfig: { maxOutputTokens: 10 }
+      }),
+      signal: ctrl.signal
+    });
+    clearTimeout(to);
+    const status = res.status;
+    const txt = await res.text();
+    let parsed;
+    try { parsed = JSON.parse(txt); } catch { parsed = txt.slice(0, 500); }
+    return { ok: res.ok, status, keyUsed: apiKey.slice(0, 20) + '...', response: parsed };
+  } catch(e) {
+    return { ok: false, error: e.name + ': ' + e.message };
+  }
+});
+
 app.get('/api/seller/estado-mejora-ia', async (req, reply) => {
   const payload = requireSeller(req);
   if (!payload) { reply.code(401); return { ok: false }; }

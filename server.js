@@ -4590,13 +4590,25 @@ async function categorizarAutomaticamente(titulo) {
 const iaJobs = new Map(); // Almacena el progreso por seller
 
 // ═══ ROTADOR DE API KEYS PARA IA ═══
-const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(k => k);
 let keyIndex = 0;
 
+function getIAKeys() {
+  if (state.iaKeys && Array.isArray(state.iaKeys) && state.iaKeys.length > 0) {
+    return state.iaKeys;
+  }
+  return (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '')
+    .split(',').map(k => k.trim()).filter(k => k);
+}
+
+function getIAModel() {
+  return (state && state.iaModel) || process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+}
+
 function getNextKey() {
-  if (GEMINI_KEYS.length === 0) return null;
-  const key = GEMINI_KEYS[keyIndex];
-  keyIndex = (keyIndex + 1) % GEMINI_KEYS.length;
+  const keys = getIAKeys();
+  if (keys.length === 0) return null;
+  const key = keys[keyIndex % keys.length];
+  keyIndex = (keyIndex + 1) % keys.length;
   return key;
 }
 
@@ -4628,7 +4640,7 @@ Responde SOLO el JSON, sin markdown.`;
     try {
       const ctrl = new AbortController();
       const to = setTimeout(() => ctrl.abort(), 30000);
-      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent', {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${getIAModel()}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
         body: JSON.stringify(payload),
@@ -4775,7 +4787,7 @@ app.post('/api/seller/test-ia', async (req, reply) => {
   try {
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), 30000);
-    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent', {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${getIAModel()}:generateContent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify({
@@ -4793,6 +4805,38 @@ app.post('/api/seller/test-ia', async (req, reply) => {
   } catch(e) {
     return { ok: false, error: e.name + ': ' + e.message };
   }
+});
+
+// ADMIN: ver estado de las keys IA
+app.get('/api/admin/ia-status', async (req, reply) => {
+  const admin = requireAdmin(req);
+  if (!admin) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  const envKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(k => k);
+  const stateKeys = (state.iaKeys && Array.isArray(state.iaKeys)) ? state.iaKeys : [];
+  return {
+    ok: true,
+    env_count: envKeys.length,
+    env_first: envKeys[0] ? envKeys[0].slice(0, 25) + '...' : null,
+    state_count: stateKeys.length,
+    state_first: stateKeys[0] ? stateKeys[0].slice(0, 25) + '...' : null,
+    model: getIAModel(),
+    efectivo: getIAKeys().length
+  };
+});
+
+// ADMIN: sincronizar keys IA en state (persistente en Supabase)
+app.post('/api/admin/sync-ia-keys', async (req, reply) => {
+  const admin = requireAdmin(req);
+  if (!admin) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  const body = req.body || {};
+  const keys = Array.isArray(body.keys) ? body.keys.map(k => String(k).trim()).filter(k => k.length > 10) : [];
+  const model = String(body.model || '').trim();
+  if (keys.length === 0) { reply.code(400); return { ok: false, error: 'Sin keys válidas' }; }
+  state.iaKeys = keys;
+  if (model) state.iaModel = model;
+  await save();
+  console.log(`[IA-SYNC] ${keys.length} keys sincronizadas, modelo: ${getIAModel()}`);
+  return { ok: true, keys: keys.length, model: getIAModel() };
 });
 
 app.get('/api/seller/estado-mejora-ia', async (req, reply) => {

@@ -2736,12 +2736,14 @@ app.post('/api/seller/register', async (req, reply) => {
     }
 
     
+    const msgEstado = estadoInicial === 'aprobado' ? '✅ <b>Aprobado automáticamente</b> (Plan Básico)' : '⏳ <b>Pendiente de aprobación</b> (Requiere pago y revisión)';
     notifyTelegram(
       '🏪 <b>NUEVO VENDEDOR</b>\n\n' +
       '👤 ' + nombre + '\n' +
       '📱 ' + tel + '\n' +
-      '📍 ' + (provincia || '?') + (municipio ? ' / ' + municipio : '') + '\n\n' +
-      '⏳ Pendiente de aprobación'
+      '📍 ' + (provincia || '?') + (municipio ? ' / ' + municipio : '') + '\n' +
+      '💎 Plan: ' + planElegido.toUpperCase() + '\n\n' +
+      msgEstado
     ).catch(() => {});
     
     return { ok: true, seller: { id: nuevo.id, nombre: nuevo.nombre, telefono: nuevo.telefono, estado: nuevo.estado } };

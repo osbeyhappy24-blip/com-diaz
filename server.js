@@ -2761,6 +2761,19 @@ app.post('/api/seller/register', async (req, reply) => {
 });
 
 // POST: login de vendedor
+
+// ═══ VERIFICAR SI EL TELÉFONO YA EXISTE (Para validación en tiempo real) ═══
+app.get('/api/seller/check-phone', async (req, reply) => {
+  try {
+    const tel = normalizarTelefono(req.query.tel);
+    if (!tel || !validarTelefono(tel)) return { ok: true, exists: false };
+    const seller = await dbSelectOne('sellers', '?telefono=eq.' + encodeURIComponent(tel));
+    return { ok: true, exists: !!seller };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 app.post('/api/seller/login', async (req, reply) => {
   try {
     const { telefono, password } = req.body || {};

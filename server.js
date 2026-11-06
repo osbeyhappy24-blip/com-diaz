@@ -113,6 +113,8 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/api/pin/change')) return;
   if (req.url.startsWith('/api/app-version') && req.method === 'GET') return;
   if (req.url.startsWith('/api/admin/reset-ratelimit')) return;
+  if (req.url.startsWith('/api/admin/ia-status')) return;
+  if (req.url.startsWith('/api/admin/sync-ia-keys')) return;
   if (req.url.startsWith('/api/test-ai')) return;
   if (req.url.startsWith('/api/admin/recategorizar')) return;
   if (req.url.startsWith('/api/list-models')) return; // BYPASS TEST IA  // reset bypass
@@ -4809,7 +4811,9 @@ app.post('/api/seller/test-ia', async (req, reply) => {
 
 // ADMIN: ver estado de las keys IA
 app.get('/api/admin/ia-status', async (req, reply) => {
-  // Gate principal ya protege con X-Comdiaz-Key
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  if (String(payload.telefono) !== '5358980267') { reply.code(403); return { ok: false, error: 'Solo admin' }; }
   const envKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(k => k);
   const stateKeys = (state.iaKeys && Array.isArray(state.iaKeys)) ? state.iaKeys : [];
   return {
@@ -4825,7 +4829,9 @@ app.get('/api/admin/ia-status', async (req, reply) => {
 
 // ADMIN: sincronizar keys IA en state (persistente en Supabase)
 app.post('/api/admin/sync-ia-keys', async (req, reply) => {
-  // Gate principal ya protege con X-Comdiaz-Key
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  if (String(payload.telefono) !== '5358980267') { reply.code(403); return { ok: false, error: 'Solo admin' }; }
   const body = req.body || {};
   const keys = Array.isArray(body.keys) ? body.keys.map(k => String(k).trim()).filter(k => k.length > 10) : [];
   const model = String(body.model || '').trim();

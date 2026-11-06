@@ -2015,7 +2015,7 @@ async function sreNotificarTelegram(mensaje) {
   try {
     await fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
       body: JSON.stringify({ chat_id: chatId, text: mensaje, parse_mode: 'HTML' }),
     });
     return true;
@@ -4561,7 +4561,7 @@ async function categorizarAutomaticamente(titulo) {
   // 2. Si no hay regla, usar IA (Gemini) si está configurada
   if (process.env.GEMINI_API_KEY) {
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4617,9 +4617,9 @@ Responde SOLO el JSON, sin markdown.`;
     if (!apiKey) break;
 
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
       });
       

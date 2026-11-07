@@ -4885,6 +4885,60 @@ app.get('/api/admin/ia-audit-global', async (req, reply) => {
   }
 });
 
+// ═══ CRON AUTOMÁTICO DE IA (cada 60 min) ═══
+let cronIAInterval = null;
+
+async function iniciarCronIA() {
+  if (cronIAInterval) return;
+  console.log('[IA-CRON] Iniciando motor automático cada 60 min');
+  
+  cronIAInterval = setInterval(async () => {
+    try {
+      if (!state.iaKeys || state.iaKeys.length === 0) {
+        console.log('[IA-CRON] Saltando: no hay keys configuradas');
+        return;
+      }
+      
+      console.log('[IA-CRON] Buscando productos pendientes en todas las tiendas...');
+      const sellers = await dbSelect('sellers', '?estado=eq.aprobado&select=id,telefono');
+      
+      for (const s of sellers || []) {
+        // Verificar si ya hay un job corriendo para este seller
+        const existing = iaJobs.get(s.id);
+        if (existing && (existing.estado === 'procesando' || existing.estado === 'en_cola')) {
+          continue; // Saltar si ya está trabajando
+        }
+        
+        // Buscar productos publicados sin descripción
+        const prods = await dbSelect('seller_products', '?seller_id=eq.' + s.id + '&publicado=eq.true&activo=eq.true&select=id,titulo,descripcion,imagenes,updated_at&order=created_at.asc');
+        const pendientes = (prods || []).filter(p => !p.descripcion || p.descripcion.length < 20);
+        
+        if (pendientes.length > 0) {
+          console.log(`[IA-CRON] Encontrados ${pendientes.length} pendientes para seller ${s.id}. Iniciando job...`);
+          
+          const job = {
+            sellerId: s.id,
+            estado: 'en_cola',
+            total: pendientes.length,
+            procesados: 0,
+            productos: pendientes,
+            creadoEn: Date.now()
+          };
+          iaJobs.set(s.id, job);
+          
+          // Ejecutar en background y esperar a que termine antes del próximo seller
+          await procesarMejoraIA(s.id); 
+        }
+      }
+    } catch(e) {
+      console.error('[IA-CRON] Error:', e.message);
+    }
+  }, 60 * 60 * 1000); // 60 minutos
+}
+
+// Iniciar el cron al arrancar el servidor
+iniciarCronIA();
+
 app.get('/api/admin/ia-status', async (req, reply) => {
   const payload = requireSeller(req);
   if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }

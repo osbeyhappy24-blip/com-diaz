@@ -4628,14 +4628,22 @@ async function optimizarProductoConIA(titulo, descripcionActual, imageUrl) {
     } catch (e) { console.log('[IA-VISION] Error descargando imagen:', e.message); }
   }
 
-  const prompt = `Eres un vendedor cubano experto. Analiza la imagen del producto y el texto actual para generar una ficha atractiva.
+  const prompt = `Eres un redactor experto de un marketplace cubano. Analiza la imagen del producto y el texto actual para generar una ficha profesional y atractiva.
+
 Título actual: "${titulo}"
 Descripción actual: "${descripcionActual || 'sin descripción'}"
 
-Devuelve SOLO un JSON con:
-{"titulo": "Título mejorado (máx 60 caracteres, atractivo)", "descripcion": "Descripción persuasiva 2-3 frases", "categoria": "Categoría (Instrumentos Musicales, Tecnología, Hogar, Ropa, Belleza, Herramientas, Energía, Otros)"}
+REGLAS:
+- Tono profesional, claro y atractivo
+- Sin jerga cubana ni exageraciones
+- Si la imagen muestra marca, modelo o accesorios, menciónalos con precisión
+- Descripción objetiva pero persuasiva (2-3 frases)
+- No inventes características que no estén en la imagen o el texto
 
-Responde SOLO el JSON, sin markdown.`;
+Devuelve SOLO un JSON con este formato exacto:
+{"titulo": "Título mejorado (máx 60 caracteres)", "descripcion": "Descripción profesional 2-3 frases", "categoria": "Instrumentos Musicales | Tecnología | Hogar | Ropa | Belleza | Herramientas | Energía | Otros"}
+
+Responde SOLO el JSON, sin markdown ni texto extra.`;
 
   const parts = [{ text: prompt }];
   if (imagePart) parts.push({ inline_data: imagePart.inline_data });
@@ -4842,6 +4850,37 @@ Responde SOLO el JSON, sin markdown.`;
     return { ok: res.ok, status: res.status, keyUsed: key.slice(0, 20) + '...', raw: data };
   } catch(e) {
     return { ok: false, error: e.name + ': ' + e.message };
+  }
+});
+
+// ADMIN: auditoría global de IA (todos los sellers)
+app.get('/api/admin/ia-audit-global', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  if (String(payload.telefono) !== '5358980267') { reply.code(403); return { ok: false, error: 'Solo admin' }; }
+
+  try {
+    const sellers = await dbSelect('sellers', '?estado=eq.aprobado&select=id,nombre,telefono,plan_id');
+    const resultado = [];
+    for (const s of sellers || []) {
+      const prods = await dbSelect('seller_products', '?seller_id=eq.' + encodeURIComponent(s.id) + '&publicado=eq.true&activo=eq.true&select=id,titulo,descripcion,imagenes,created_at&order=created_at.asc');
+      const pubs = prods || [];
+      const con_desc = pubs.filter(p => p.descripcion && p.descripcion.length > 20);
+      const sin_desc = pubs.filter(p => !p.descripcion || p.descripcion.length <= 20);
+      resultado.push({
+        seller_id: s.id,
+        nombre: s.nombre,
+        telefono: s.telefono,
+        plan: s.plan_id,
+        publicados: pubs.length,
+        con_ia: con_desc.length,
+        pendientes: sin_desc.length,
+        items_pendientes: sin_desc.map(p => ({ id: p.id, titulo: p.titulo, created_at: p.created_at }))
+      });
+    }
+    return { ok: true, total_sellers: resultado.length, sellers: resultado };
+  } catch(e) {
+    return { ok: false, error: e.message };
   }
 });
 

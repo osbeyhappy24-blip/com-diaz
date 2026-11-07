@@ -872,6 +872,24 @@ async function cargarDesdeNube() {
         state.iaOptimizado = remoto.iaOptimizado;
         app.log.info('[PERSIST] iaOptimizado hidratado: ' + Object.keys(remoto.iaOptimizado).length + ' registros');
       }
+      // Si Git no trajo las keys, intentar Supabase
+      if ((!state.iaKeys || state.iaKeys.length === 0)) {
+        try {
+          const cfgSb = await leerIAConfigDeSupabase();
+          if (cfgSb) {
+            if (cfgSb.iaKeys && Array.isArray(cfgSb.iaKeys) && cfgSb.iaKeys.length > 0) {
+              state.iaKeys = cfgSb.iaKeys;
+              app.log.info('[PERSIST] iaKeys recuperadas de Supabase: ' + cfgSb.iaKeys.length + ' keys');
+            }
+            if (cfgSb.iaModel) state.iaModel = cfgSb.iaModel;
+            if (cfgSb.iaOptimizado && typeof cfgSb.iaOptimizado === 'object') {
+              state.iaOptimizado = cfgSb.iaOptimizado;
+            }
+          }
+        } catch(e) {
+          app.log.warn('[PERSIST] Supabase fallback falló: ' + e.message);
+        }
+      }
       if (remoto.categories) state.categories = remoto.categories;
       if (remoto.shopConfig) state.shopConfig = { ...state.shopConfig, ...remoto.shopConfig };
       if (remoto.automation) state.automation = { ...state.automation, ...remoto.automation };
@@ -977,6 +995,46 @@ async function leerBackupLocales() {
     const json = zlib.gunzipSync(gz).toString('utf8');
     return JSON.parse(json);
   } catch(e) {
+    return null;
+  }
+}
+
+// ═══ Persistencia IA en Supabase (alternativa a Git) ═══
+async function guardarIAConfigEnSupabase() {
+  try {
+    const payload = {
+      key: 'ia_config',
+      value: JSON.stringify({
+        iaKeys: state.iaKeys || [],
+        iaModel: state.iaModel || 'gemini-3.6-flash',
+        iaOptimizado: state.iaOptimizado || {},
+        updatedAt: Date.now()
+      })
+    };
+    // Intentar UPDATE primero
+    const existing = await dbSelectOne('state_kv', '?key=eq.ia_config');
+    if (existing) {
+      await dbUpdate('state_kv', existing.id, { value: payload.value });
+    } else {
+      await dbInsert('state_kv', payload);
+    }
+    console.log('[SUPABASE-STATE] IA config guardada (' + (state.iaKeys || []).length + ' keys)');
+    return true;
+  } catch(e) {
+    console.error('[SUPABASE-STATE] Error guardando:', e.message);
+    return false;
+  }
+}
+
+async function leerIAConfigDeSupabase() {
+  try {
+    const row = await dbSelectOne('state_kv', '?key=eq.ia_config');
+    if (!row || !row.value) return null;
+    const cfg = JSON.parse(row.value);
+    console.log('[SUPABASE-STATE] IA config leída (' + ((cfg.iaKeys || []).length) + ' keys)');
+    return cfg;
+  } catch(e) {
+    console.error('[SUPABASE-STATE] Error leyendo:', e.message);
     return null;
   }
 }
@@ -4980,6 +5038,7 @@ app.post('/api/admin/sync-ia-keys', async (req, reply) => {
   state.iaKeys = keys;
   if (model) state.iaModel = model;
   await save();
+  await guardarIAConfigEnSupabase();
   console.log(`[IA-SYNC] ${keys.length} keys sincronizadas, modelo: ${getIAModel()}`);
   return { ok: true, keys: keys.length, model: getIAModel() };
 });

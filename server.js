@@ -115,6 +115,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/api/admin/reset-ratelimit')) return;
   if (req.url.startsWith('/api/admin/ia-status')) return;
   if (req.url.startsWith('/api/admin/sync-ia-keys')) return;
+  if (req.url.startsWith('/api/admin/ia-audit-global')) return;
   if (req.url.startsWith('/api/test-ai')) return;
   if (req.url.startsWith('/api/admin/recategorizar')) return;
   if (req.url.startsWith('/api/list-models')) return; // BYPASS TEST IA  // reset bypass

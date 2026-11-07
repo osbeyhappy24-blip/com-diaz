@@ -863,6 +863,15 @@ async function cargarDesdeNube() {
     if (remoto && typeof remoto === 'object' && Object.keys(remoto).length > 0) {
       if (remoto.margin !== undefined) state.margin = remoto.margin;
       if (remoto.pin !== undefined) state.pin = remoto.pin;
+      if (Array.isArray(remoto.iaKeys) && remoto.iaKeys.length > 0) {
+        state.iaKeys = remoto.iaKeys;
+        app.log.info('[PERSIST] iaKeys hidratadas desde Git: ' + remoto.iaKeys.length + ' keys');
+      }
+      if (remoto.iaModel) state.iaModel = remoto.iaModel;
+      if (remoto.iaOptimizado && typeof remoto.iaOptimizado === 'object') {
+        state.iaOptimizado = remoto.iaOptimizado;
+        app.log.info('[PERSIST] iaOptimizado hidratado: ' + Object.keys(remoto.iaOptimizado).length + ' registros');
+      }
       if (remoto.categories) state.categories = remoto.categories;
       if (remoto.shopConfig) state.shopConfig = { ...state.shopConfig, ...remoto.shopConfig };
       if (remoto.automation) state.automation = { ...state.automation, ...remoto.automation };
@@ -984,6 +993,9 @@ async function guardarEnNube() {
       margin: state.margin,
       pin: state.pin,
       categories: state.categories,
+      iaKeys: state.iaKeys || [],
+      iaModel: state.iaModel || 'gemini-3.6-flash',
+      iaOptimizado: state.iaOptimizado || {},
       shopConfig: state.shopConfig,
       automation: {
         running: state.automation.running,

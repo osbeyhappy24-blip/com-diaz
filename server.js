@@ -4614,18 +4614,34 @@ function getNextKey() {
   return key;
 }
 
-async function optimizarProductoConIA(titulo, descripcionActual) {
-  const prompt = `Eres un vendedor cubano experto. Optimiza este producto:
+async function optimizarProductoConIA(titulo, descripcionActual, imageUrl) {
+  let imagePart = null;
+  if (imageUrl) {
+    try {
+      const imgRes = await fetch(imageUrl);
+      if (imgRes.ok) {
+        const arrayBuffer = await imgRes.arrayBuffer();
+        const base64 = Buffer.from(arrayBuffer).toString('base64');
+        const mime = imgRes.headers.get('content-type') || 'image/jpeg';
+        imagePart = { inline_data: { mime_type: mime, data: base64 } };
+      }
+    } catch (e) { console.log('[IA-VISION] Error descargando imagen:', e.message); }
+  }
+
+  const prompt = `Eres un vendedor cubano experto. Analiza la imagen del producto y el texto actual para generar una ficha atractiva.
 Título actual: "${titulo}"
 Descripción actual: "${descripcionActual || 'sin descripción'}"
 
-Devuelve un JSON estricto con este formato:
-{"titulo": "Título mejorado (máx 60 caracteres, atractivo, con emoji si aplica)", "descripcion": "Descripción persuasiva (2-3 líneas, sin comillas)", "categoria": "Categoría (Instrumentos Musicales, Tecnología, Hogar, Ropa, Belleza, Herramientas, Energía, Otros)"}
+Devuelve SOLO un JSON con:
+{"titulo": "Título mejorado (máx 60 caracteres, atractivo)", "descripcion": "Descripción persuasiva 2-3 frases", "categoria": "Categoría (Instrumentos Musicales, Tecnología, Hogar, Ropa, Belleza, Herramientas, Energía, Otros)"}
 
 Responde SOLO el JSON, sin markdown.`;
 
+  const parts = [{ text: prompt }];
+  if (imagePart) parts.push({ inline_data: imagePart.inline_data });
+
   const payload = {
-    contents: [{ parts: [{ text: prompt }] }],
+    contents: [{ parts: parts }],
     generationConfig: {
       maxOutputTokens: 2000,
       temperature: 0.7,
@@ -4642,7 +4658,7 @@ Responde SOLO el JSON, sin markdown.`;
   const maxIntentos = Math.max(getIAKeys().length * 2, 6);
   for (let i = 0; i < maxIntentos; i++) {
     const apiKey = getNextKey();
-    if (!apiKey) { console.log('[IA] No hay keys'); break; }
+    if (!apiKey) break;
     try {
       const ctrl = new AbortController();
       const to = setTimeout(() => ctrl.abort(), 30000);
@@ -4653,45 +4669,25 @@ Responde SOLO el JSON, sin markdown.`;
         signal: ctrl.signal
       });
       clearTimeout(to);
-
-      if (res.status === 429) { console.log(`[IA] 429 intento ${i+1}`); continue; }
+      if (res.status === 429) { continue; }
       if (res.status === 503 || res.status === 502) {
-        const wait = Math.min(2000 * Math.pow(2, Math.floor(i/2)), 8000);
-        console.log(`[IA] ${res.status} reintento en ${wait}ms`);
-        await new Promise(r => setTimeout(r, wait));
+        await new Promise(r => setTimeout(r, Math.min(2000 * Math.pow(2, Math.floor(i/2)), 8000)));
         continue;
       }
-      if (!res.ok) {
-        const txt = await res.text().catch(() => '');
-        console.log(`[IA] HTTP ${res.status}: ${txt.slice(0, 150)}`);
-        continue;
-      }
-
+      if (!res.ok) continue;
       const data = await res.json();
       const cand = data?.candidates?.[0];
-      if (!cand) { console.log('[IA] Sin candidates. promptFeedback:', JSON.stringify(data.promptFeedback || {}).slice(0, 200)); continue; }
-      if (cand.finishReason === 'SAFETY') { console.log('[IA] SAFETY:', titulo.slice(0, 40)); return null; }
-      if (cand.finishReason === 'MAX_TOKENS') { console.log('[IA] MAX_TOKENS (subir maxOutputTokens):', titulo.slice(0, 40)); continue; }
-      const parts = cand.content?.parts;
-      if (!parts || !parts[0]?.text) { console.log('[IA] Sin texto. finishReason:', cand.finishReason, 'content:', JSON.stringify(cand.content || {}).slice(0, 150)); continue; }
-      const text = parts[0].text;
-      console.log('[IA] Respuesta OK (' + text.length + ' chars):', text.slice(0, 80));
+      if (!cand) continue;
+      const partsResp = cand.content?.parts;
+      if (!partsResp || !partsResp[0]?.text) continue;
+      const text = partsResp[0].text;
       const jm = text.match(/\{[\s\S]*\}/);
-      if (!jm) { console.log('[IA] Sin JSON en respuesta'); continue; }
+      if (!jm) continue;
       try {
         const parsed = JSON.parse(jm[0]);
-        if (!parsed.titulo && !parsed.descripcion) {
-          console.log('[IA] JSON vacío:', JSON.stringify(parsed));
-          continue;
-        }
-        return parsed;
-      } catch(pe) {
-        console.log('[IA] JSON inválido:', pe.message, '→', jm[0].slice(0, 150));
-        continue;
-      }
-    } catch(e) {
-      console.log(`[IA] Excepción (${e.name}):`, e.message);
-    }
+        if (parsed.titulo || parsed.descripcion) return parsed;
+      } catch(e) { continue; }
+    } catch(e) { console.log('[IA-VISION] Error:', e.message); }
   }
   return null;
 }
@@ -4707,7 +4703,8 @@ async function procesarMejoraIA(sellerId) {
   for (let i = 0; i < job.productos.length; i++) {
     const p = job.productos[i];
     try {
-      const opt = await optimizarProductoConIA(p.titulo, p.descripcion);
+      const imgUrl = (p.imagenes && p.imagenes[0]) || null;
+      const opt = await optimizarProductoConIA(p.titulo, p.descripcion, imgUrl);
       if (opt) {
         const updates = {};
         if (opt.titulo) updates.titulo = opt.titulo;
@@ -4742,7 +4739,7 @@ app.post('/api/seller/iniciar-mejora-ia', async (req, reply) => {
   const payload = requireSeller(req);
   if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
 
-  const productos = await dbSelect('seller_products', '?seller_id=eq.' + payload.sellerId + '&select=id,titulo,descripcion,updated_at&publicado=eq.true&activo=eq.true&limit=100');
+  const productos = await dbSelect('seller_products', '?seller_id=eq.' + payload.sellerId + '&select=id,titulo,descripcion,imagenes,updated_at&publicado=eq.true&activo=eq.true&limit=100');
   
   // Filtrar los que ya fueron procesados por la IA
   const productosPendientes = (productos || []).filter(p => {

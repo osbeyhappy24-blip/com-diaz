@@ -1012,6 +1012,8 @@ async function guardarIAConfigEnSupabase() {
       iaKeys: state.iaKeys || [],
       iaModel: state.iaModel || 'gemini-3.6-flash',
       iaOptimizado: state.iaOptimizado || {},
+      iaModerado: state.iaModerado || {},
+      sellerStrikes: state.sellerStrikes || {},
       updatedAt: Date.now()
     });
     const r = await fetch(SB_URL + '/storage/v1/object/state/state_ia.json', {
@@ -4794,6 +4796,79 @@ Responde SOLO el JSON, sin markdown ni texto extra.`;
 }
 
 
+async function moderarImagen(urlImagen, titulo) {
+  try {
+    const key = getNextKey();
+    if (!key) return { safe: true, reason: 'sin_keys' };
+
+    const prompt = `Analiza esta imagen de un producto de marketplace. Responde SOLO con JSON valido:
+{"safe":true,"reason":""} si es un producto normal (ropa, instrumentos, electronica, hogar, etc)
+{"safe":false,"reason":"<motivo>"} si contiene: desnudos, contenido sexual, lenceria muy reveladora mostrando cuerpos, objetos sexuales, alcohol, drogas, tabaco, violencia grafica
+
+Se estricto pero no exagerado. Un maniqui con ropa normal = safe. Una guitarra = safe. Un vino = NO safe. Ropa interior expuesta de forma explicita = NO safe.
+
+Responde SOLO JSON, sin markdown.`;
+
+    const imgRes = await fetch(urlImagen);
+    if (!imgRes.ok) return { safe: true, reason: 'img_no_descargable' };
+    const buffer = Buffer.from(await imgRes.arrayBuffer());
+    const mime = imgRes.headers.get('content-type') || 'image/jpeg';
+    const b64 = buffer.toString('base64');
+
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 25000);
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${getIAModel()}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }] }],
+        generationConfig: { maxOutputTokens: 200, temperature: 0.1, thinkingConfig: { thinkingBudget: 0 } }
+      }),
+      signal: ctrl.signal
+    });
+    clearTimeout(to);
+
+    if (!res.ok) return { safe: true, reason: 'http_' + res.status };
+    const data = await res.json();
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return { safe: true, reason: 'sin_json' };
+    return JSON.parse(m[0]);
+  } catch(e) {
+    console.log('[MODERACION] Error:', e.message);
+    return { safe: true, reason: 'error_interno' };
+  }
+}
+
+async function aplicarModeracion(sellerId, producto, modResult) {
+  try {
+    if (!state.iaModerado) state.iaModerado = {};
+    if (!state.sellerStrikes) state.sellerStrikes = {};
+
+    if (modResult.safe) {
+      state.iaModerado[producto.id] = { safe: true, ts: Date.now() };
+      await save();
+      return;
+    }
+
+    // Producto inseguro: ocultar + registrar
+    state.iaModerado[producto.id] = { safe: false, reason: modResult.reason, ts: Date.now() };
+    state.sellerStrikes[sellerId] = (state.sellerStrikes[sellerId] || 0) + 1;
+    const strikes = state.sellerStrikes[sellerId];
+
+    await dbUpdate('seller_products', producto.id, { publicado: false });
+    console.log(`[MODERACION] Producto ${producto.id} bloqueado: ${modResult.reason}. Strike ${strikes}/3 seller ${sellerId}`);
+
+    if (strikes >= 3) {
+      await dbUpdate('sellers', sellerId, { estado: 'suspendido' });
+      console.log(`[MODERACION] Seller ${sellerId} SUSPENDIDO por 3 strikes`);
+    }
+    await save();
+  } catch(e) {
+    console.log('[MODERACION] Error aplicando:', e.message);
+  }
+}
+
 async function procesarMejoraIA(sellerId) {
   const job = iaJobs.get(sellerId);
   if (!job || job.estado !== 'en_cola') return;
@@ -5001,9 +5076,24 @@ async function iniciarCronIA() {
           continue; // Saltar si ya está trabajando
         }
         
-        // Buscar productos publicados sin descripción
+        // Buscar productos publicados
         const prods = await dbSelect('seller_products', '?seller_id=eq.' + s.id + '&publicado=eq.true&activo=eq.true&select=id,titulo,descripcion,imagenes,updated_at&order=created_at.asc');
-        const pendientes = (prods || []).filter(p => !p.descripcion || p.descripcion.length < 20);
+        
+        // 1) Moderar imágenes nuevas (no moderadas aún)
+        if (!state.iaModerado) state.iaModerado = {};
+        const sinModerar = (prods || []).filter(p => p.imagenes && p.imagenes[0] && !state.iaModerado[p.id]);
+        for (const p of sinModerar.slice(0, 3)) { // máximo 3 por ciclo para no saturar
+          const mod = await moderarImagen(p.imagenes[0], p.titulo);
+          await aplicarModeracion(s.id, p, mod);
+          await new Promise(r => setTimeout(r, 1500)); // pausa
+        }
+        
+        // 2) Describir productos sin descripción (excluyendo bloqueados)
+        const bloqueados = Object.keys(state.iaModerado || {}).filter(id => state.iaModerado[id].safe === false);
+        const pendientes = (prods || []).filter(p => 
+          !bloqueados.includes(p.id) && 
+          (!p.descripcion || p.descripcion.length < 20)
+        );
         
         if (pendientes.length > 0) {
           console.log(`[IA-CRON] Encontrados ${pendientes.length} pendientes para seller ${s.id}. Iniciando job...`);
@@ -5025,7 +5115,7 @@ async function iniciarCronIA() {
     } catch(e) {
       console.error('[IA-CRON] Error:', e.message);
     }
-  }, 60 * 60 * 1000); // 60 minutos
+  }, 5 * 60 * 1000); // 5 minutos (reactivo, descansa si no hay pendientes)
 }
 
 // Iniciar el cron al arrancar el servidor

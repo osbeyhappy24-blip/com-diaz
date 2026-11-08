@@ -1028,11 +1028,53 @@ async function guardarStateFullEnSupabase() {
   try {
     const SB_URL = process.env.SUPABASE_URL;
     const SB_KEY = process.env.SUPABASE_SECRET_KEY;
+    
+    // 1. Leer Storage actual para no borrar nada
+    let existingTiendas = [];
+    let existingNotif = [];
+    try {
+      const rGet = await fetch(SB_URL + '/storage/v1/object/state/state-full.json', {
+        headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
+      });
+      if (rGet.ok) {
+        const data = await rGet.json();
+        existingTiendas = data.tiendas || [];
+        existingNotif = data.notifications || [];
+      }
+    } catch(_) {}
+    
+    // 2. MERGE: Storage + memoria (memoria gana si conflicto)
+    const map = new Map();
+    for (const t of existingTiendas) {
+      if (t && t.seller_id) map.set(t.seller_id, t);
+    }
+    for (const t of (state.tiendas || [])) {
+      if (t && t.seller_id) map.set(t.seller_id, t);
+    }
+    const mergedTiendas = Array.from(map.values());
+    
+    const nMap = new Map();
+    for (const n of existingNotif) {
+      if (n && n.id) nMap.set(n.id, n);
+    }
+    for (const n of (state.notifications || [])) {
+      if (n && n.id) nMap.set(n.id, n);
+    }
+    const mergedNotif = Array.from(nMap.values());
+    
+    // 3. Sincronizar memoria con Storage si Storage tenía más
+    if (mergedTiendas.length > (state.tiendas || []).length) {
+      state.tiendas = mergedTiendas;
+      console.log('[SUPABASE-STATE] Memoria sincronizada con Storage (' + mergedTiendas.length + ' tiendas)');
+    }
+    
+    // 4. Subir merge
     const body = JSON.stringify({
-      tiendas: state.tiendas || [],
-      notifications: state.notifications || [],
+      tiendas: mergedTiendas,
+      notifications: mergedNotif,
       updatedAt: Date.now()
     });
+    
     const r = await fetch(SB_URL + '/storage/v1/object/state/state-full.json', {
       method: 'POST',
       headers: {
@@ -1048,7 +1090,7 @@ async function guardarStateFullEnSupabase() {
       console.error('[SUPABASE-STATE] save-full falló HTTP ' + r.status + ': ' + err.slice(0, 200));
       return false;
     }
-    console.log('[SUPABASE-STATE] state-full guardado (' + (state.tiendas || []).length + ' tiendas)');
+    console.log('[SUPABASE-STATE] state-full guardado con ' + mergedTiendas.length + ' tiendas (Storage: ' + existingTiendas.length + ', memoria: ' + (state.tiendas || []).length + ')');
     return true;
   } catch(e) {
     console.error('[SUPABASE-STATE] Error guardar state-full:', e.message);

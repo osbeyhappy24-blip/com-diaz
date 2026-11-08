@@ -900,22 +900,26 @@ async function cargarDesdeNube() {
       // [FIX] NO sobreescribir published - mantener el local con IDs reales de eBay
       if (remoto.tiendas) state.tiendas = remoto.tiendas;
 
-      // Hidratar tiendas desde Supabase Storage si no hay ninguna
-      if (!state.tiendas || state.tiendas.length === 0) {
-        try {
-          const cfgFull = await leerStateFullDeSupabase();
-          if (cfgFull && Array.isArray(cfgFull.tiendas) && cfgFull.tiendas.length > 0) {
-            state.tiendas = cfgFull.tiendas;
-            console.log('[PERSIST] tiendas hidratadas desde Storage: ' + cfgFull.tiendas.length);
+      // Hidratar tiendas desde Storage (MERGE: añadir las que falten)
+      try {
+        const cfgFull = await leerStateFullDeSupabase();
+        if (cfgFull && Array.isArray(cfgFull.tiendas) && cfgFull.tiendas.length > 0) {
+          const existingIds = new Set((state.tiendas || []).map(t => t && t.seller_id).filter(Boolean));
+          const nuevas = cfgFull.tiendas.filter(t => t && t.seller_id && !existingIds.has(t.seller_id));
+          if (nuevas.length > 0) {
+            state.tiendas = [...(state.tiendas || []), ...nuevas];
+            console.log('[PERSIST] tiendas añadidas desde Storage: ' + nuevas.length + ' (total: ' + state.tiendas.length + ')');
+          } else {
+            console.log('[PERSIST] tiendas Storage ya presentes en memoria (' + (state.tiendas || []).length + ')');
           }
-          if (cfgFull && Array.isArray(cfgFull.notifications) && cfgFull.notifications.length > 0) {
-            if (!state.notifications || state.notifications.length === 0) {
-              state.notifications = cfgFull.notifications;
-            }
-          }
-        } catch(e) {
-          console.log('[PERSIST] Error hidratando tiendas:', e.message);
         }
+        if (cfgFull && Array.isArray(cfgFull.notifications) && cfgFull.notifications.length > 0) {
+          if (!state.notifications || state.notifications.length === 0) {
+            state.notifications = cfgFull.notifications;
+          }
+        }
+      } catch(e) {
+        console.log('[PERSIST] Error hidratando tiendas:', e.message);
       }
       if (remoto.productosManuales) state.productosManuales = remoto.productosManuales;
       if (remoto.orders) state.orders = remoto.orders;
@@ -4550,9 +4554,12 @@ function _resetMonthlyRefs() {
 
 // Crear tienda (una por seller)
 app.post('/api/admin/reload-tiendas', async (req, reply) => {
-  const payload = requireSeller(req);
-  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
-  if (String(payload.telefono) !== '5358980267') { reply.code(403); return { ok: false, error: 'Solo admin' }; }
+  // Acepta X-Comdiaz-Key (funciona desde Termux sin JWT mismatch)
+  const _key = String(req.headers['x-comdiaz-key'] || req.query?.k || '');
+  const _expected = String(process.env.COMDIAZ_KEY || 'ukafr7gb');
+  if (_key !== _expected) {
+    reply.code(401); return { ok: false, error: 'No autorizado (usa header X-Comdiaz-Key)' };
+  }
   try {
     const cfgFull = await leerStateFullDeSupabase();
     if (!cfgFull || !Array.isArray(cfgFull.tiendas)) {

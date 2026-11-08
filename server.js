@@ -4774,7 +4774,7 @@ async function optimizarProductoConIA(titulo, descripcionActual, imageUrl) {
     } catch (e) { console.log('[IA-VISION] Error descargando imagen:', e.message); }
   }
 
-  const prompt = `Eres un redactor experto de un marketplace cubano. Analiza la imagen del producto y el texto actual para generar una ficha profesional y atractiva.
+  const prompt = `Eres un redactor experto de un marketplace cubano. Analiza la imagen del producto y el texto actual para generar una ficha profesional y atractiva. IMPORTANTE: Asigna una categoría ESPECÍFICA según el tipo exacto de producto, NO uses categorías genéricas.
 
 Título actual: "${titulo}"
 Descripción actual: "${descripcionActual || 'sin descripción'}"
@@ -5043,7 +5043,7 @@ Título actual: "${titulo}"
 Descripción actual: "${descripcion || 'sin descripción'}"
 
 Devuelve un JSON estricto con este formato:
-{"titulo": "Título mejorado (máx 60 caracteres)", "descripcion": "Descripción persuasiva 2-3 líneas", "categoria": "Categoría"}
+{"titulo": "Título mejorado (máx 60 caracteres)", "descripcion": "Descripción persuasiva 2-3 líneas", "categoria": "Categoría ESPECÍFICA (ej: Guitarras y Accesorios, Pianos y Teclados, Parches para Batería, Bafles y Altavoces, Cables y Conectores, Micrófonos, Subwoofers, Amplificadores, Violines, Percusión Latina, Auriculares, Controladores DJ, Soportes y Accesorios, Sistemas Inalámbricos, Mezcladoras de Audio, Baterías Electrónicas)"}
 
 Responde SOLO el JSON, sin markdown.`;
 

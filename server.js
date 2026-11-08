@@ -115,6 +115,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/api/admin/reset-ratelimit')) return;
   if (req.url.startsWith('/api/admin/ia-status')) return;
   if (req.url.startsWith('/api/admin/sync-ia-keys')) return;
+  if (req.url.startsWith('/api/admin/force-save-full')) return;
   if (req.url.startsWith('/api/admin/ia-force-save')) return;
   if (req.url.startsWith('/api/admin/ia-audit-global')) return;
   if (req.url.startsWith('/api/test-ai')) return;
@@ -1000,6 +1001,58 @@ async function leerBackupLocales() {
   }
 }
 
+async function guardarStateFullEnSupabase() {
+  try {
+    const SB_URL = process.env.SUPABASE_URL;
+    const SB_KEY = process.env.SUPABASE_SECRET_KEY;
+    const body = JSON.stringify({
+      tiendas: state.tiendas || [],
+      notifications: state.notifications || [],
+      updatedAt: Date.now()
+    });
+    const r = await fetch(SB_URL + '/storage/v1/object/state/state-full.json', {
+      method: 'POST',
+      headers: {
+        'apikey': SB_KEY,
+        'Authorization': 'Bearer ' + SB_KEY,
+        'Content-Type': 'application/json',
+        'x-upsert': 'true'
+      },
+      body: body
+    });
+    if (!r.ok) {
+      const err = await r.text().catch(() => '');
+      console.error('[SUPABASE-STATE] save-full falló HTTP ' + r.status + ': ' + err.slice(0, 200));
+      return false;
+    }
+    console.log('[SUPABASE-STATE] state-full guardado (' + (state.tiendas || []).length + ' tiendas)');
+    return true;
+  } catch(e) {
+    console.error('[SUPABASE-STATE] Error guardar state-full:', e.message);
+    return false;
+  }
+}
+
+async function leerStateFullDeSupabase() {
+  try {
+    const SB_URL = process.env.SUPABASE_URL;
+    const SB_KEY = process.env.SUPABASE_SECRET_KEY;
+    const r = await fetch(SB_URL + '/storage/v1/object/state/state-full.json', {
+      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
+    });
+    if (!r.ok) {
+      if (r.status === 404) return null;
+      return null;
+    }
+    const cfg = await r.json();
+    console.log('[SUPABASE-STATE] state-full leído (' + ((cfg.tiendas || []).length) + ' tiendas)');
+    return cfg;
+  } catch(e) {
+    console.error('[SUPABASE-STATE] Error leer state-full:', e.message);
+    return null;
+  }
+}
+
 // ═══ Persistencia IA en Supabase (alternativa a Git) ═══
 async function guardarIAConfigEnSupabase() {
   try {
@@ -1100,6 +1153,8 @@ function sec_validarTitulo(titulo) {
 }
 
 async function guardarEnNube() {
+  // Persistir state-full en Storage (backup robusto)
+  try { await guardarStateFullEnSupabase(); } catch(e) {}
   // Guardar completo en local
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2));
@@ -4475,6 +4530,14 @@ function _resetMonthlyRefs() {
 // ═══════════════════════════════════════════════════════
 
 // Crear tienda (una por seller)
+app.post('/api/admin/force-save-full', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  if (String(payload.telefono) !== '5358980267') { reply.code(403); return { ok: false, error: 'Solo admin' }; }
+  const ok = await guardarStateFullEnSupabase();
+  return { ok, tiendas: (state.tiendas || []).length, notifications: (state.notifications || []).length };
+});
+
 app.post('/api/seller/crear-tienda', async (req, reply) => {
   const payload = requireSeller(req);
   if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }

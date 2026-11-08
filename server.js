@@ -115,6 +115,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/api/admin/reset-ratelimit')) return;
   if (req.url.startsWith('/api/admin/ia-status')) return;
   if (req.url.startsWith('/api/admin/sync-ia-keys')) return;
+  if (req.url.startsWith('/api/admin/ia-force-save')) return;
   if (req.url.startsWith('/api/admin/ia-audit-global')) return;
   if (req.url.startsWith('/api/test-ai')) return;
   if (req.url.startsWith('/api/admin/recategorizar')) return;
@@ -5027,6 +5028,91 @@ app.get('/api/admin/ia-status', async (req, reply) => {
 });
 
 // ADMIN: sincronizar keys IA en state (persistente en Supabase)
+// ADMIN: force-save directo (diagnóstico completo, bypass save/dbInsert)
+app.post('/api/admin/ia-force-save', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  if (String(payload.telefono) !== '5358980267') { reply.code(403); return { ok: false, error: 'Solo admin' }; }
+
+  const body = req.body || {};
+  const keys = Array.isArray(body.keys) ? body.keys.map(k => String(k).trim()).filter(k => k.length > 10) : [];
+  const model = String(body.model || 'gemini-3.6-flash').trim();
+
+  if (keys.length === 0) return { ok: false, error: 'Sin keys' };
+
+  // 1. Set en memoria
+  state.iaKeys = keys;
+  state.iaModel = model;
+
+  const diag = { keys_recibidas: keys.length, model, pasos: {} };
+
+  // 2. Supabase directo (raw fetch, sin dbInsert)
+  const SB_URL = process.env.SUPABASE_URL;
+  const SB_KEY = process.env.SUPABASE_SECRET_KEY;
+  const value = JSON.stringify({
+    iaKeys: keys,
+    iaModel: model,
+    iaOptimizado: state.iaOptimizado || {},
+    updatedAt: Date.now()
+  });
+
+  try {
+    const del = await fetch(SB_URL + '/rest/v1/state_kv?key=eq.ia_config', {
+      method: 'DELETE',
+      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
+    });
+    diag.pasos.sb_delete = del.status;
+
+    const ins = await fetch(SB_URL + '/rest/v1/state_kv', {
+      method: 'POST',
+      headers: {
+        'apikey': SB_KEY,
+        'Authorization': 'Bearer ' + SB_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ key: 'ia_config', value: value })
+    });
+    diag.pasos.sb_insert = ins.status;
+    if (!ins.ok) diag.pasos.sb_insert_body = (await ins.text()).slice(0, 200);
+  } catch(e) {
+    diag.pasos.sb_error = e.message;
+  }
+
+  // 3. Read-back Supabase
+  try {
+    const rb = await fetch(SB_URL + '/rest/v1/state_kv?key=eq.ia_config&select=value', {
+      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
+    });
+    const rows = await rb.json();
+    if (Array.isArray(rows) && rows.length > 0) {
+      const parsed = JSON.parse(rows[0].value);
+      diag.pasos.sb_readback_keys = (parsed.iaKeys || []).length;
+      diag.pasos.sb_readback_model = parsed.iaModel;
+    } else {
+      diag.pasos.sb_readback = 'empty';
+    }
+  } catch(e) {
+    diag.pasos.sb_readback_error = e.message;
+  }
+
+  // 4. Git directo con guardarEstado (bypass save)
+  try {
+    const esencia = {
+      iaKeys: keys,
+      iaModel: model,
+      iaOptimizado: state.iaOptimizado || {}
+    };
+    const r = await guardarEstado(esencia);
+    diag.pasos.git_guardar = r.ok ? 'ok' : ('err: ' + (r.error || '?'));
+  } catch(e) {
+    diag.pasos.git_error = e.message;
+  }
+
+  diag.state_iaKeys_len = (state.iaKeys || []).length;
+
+  return { ok: true, diag };
+});
+
 app.post('/api/admin/sync-ia-keys', async (req, reply) => {
   const payload = requireSeller(req);
   if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }

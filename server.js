@@ -898,6 +898,24 @@ async function cargarDesdeNube() {
       if (remoto.sources) state.sources = remoto.sources;
       // [FIX] NO sobreescribir published - mantener el local con IDs reales de eBay
       if (remoto.tiendas) state.tiendas = remoto.tiendas;
+
+      // Hidratar tiendas desde Supabase Storage si no hay ninguna
+      if (!state.tiendas || state.tiendas.length === 0) {
+        try {
+          const cfgFull = await leerStateFullDeSupabase();
+          if (cfgFull && Array.isArray(cfgFull.tiendas) && cfgFull.tiendas.length > 0) {
+            state.tiendas = cfgFull.tiendas;
+            console.log('[PERSIST] tiendas hidratadas desde Storage: ' + cfgFull.tiendas.length);
+          }
+          if (cfgFull && Array.isArray(cfgFull.notifications) && cfgFull.notifications.length > 0) {
+            if (!state.notifications || state.notifications.length === 0) {
+              state.notifications = cfgFull.notifications;
+            }
+          }
+        } catch(e) {
+          console.log('[PERSIST] Error hidratando tiendas:', e.message);
+        }
+      }
       if (remoto.productosManuales) state.productosManuales = remoto.productosManuales;
       if (remoto.orders) state.orders = remoto.orders;
       if (remoto.subscriptions) state.subscriptions = remoto.subscriptions;

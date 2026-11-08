@@ -4927,7 +4927,14 @@ async function procesarMejoraIA(sellerId) {
         const updates = {};
         if (opt.titulo) updates.titulo = opt.titulo;
         if (opt.descripcion) updates.descripcion = opt.descripcion;
-        if (opt.categoria) updates.categoria = opt.categoria;
+        // ⚠️ RESPETAR categoría del usuario: solo asignar si está vacía
+        const catActual = (p.categoria || '').trim();
+        if (opt.categoria && (!catActual || catActual.length < 2)) {
+          updates.categoria = opt.categoria;
+          console.log(`[IA] Categoría asignada a ${p.id}: ${opt.categoria} (estaba vacía)`);
+        } else if (catActual) {
+          console.log(`[IA] Categoría de ${p.id} respetada: "${catActual}" (usuario la puso)`);
+        }
         await dbUpdate('seller_products', p.id, updates);
         job.ultimoProducto = opt.titulo || p.titulo;
         // Guardar que este producto ya fue optimizado (con timestamp)

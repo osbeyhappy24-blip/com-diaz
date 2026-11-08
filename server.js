@@ -1003,6 +1003,45 @@ async function leerBackupLocales() {
   }
 }
 
+// ═══ SEGURIDAD: helpers (sec_*) ═══
+function sec_sanitizarTexto(texto, maxLen) {
+  if (!texto) return '';
+  let s = String(texto).trim().slice(0, maxLen || 2000);
+  s = s.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+  s = s.replace(/<[^>]+>/g, '');
+  s = s.replace(/javascript:/gi, '');
+  s = s.replace(/data:text\/html/gi, '');
+  s = s.replace(/on\w+\s*=/gi, '');
+  s = s.replace(/[\u0000-\u001f\u007f]/g, ' ');
+  return s.trim();
+}
+
+function sec_contienePatronMalicioso(texto) {
+  if (!texto) return false;
+  const patrones = [
+    /<script/i, /javascript:/i, /onerror\s*=/i, /onload\s*=/i,
+    /DROP\s+TABLE/i, /UNION\s+SELECT/i, /\bDELETE\s+FROM\b/i,
+    /eval\s*\(/i, /document\.cookie/i, /localStorage/i,
+    /<iframe/i, /<object/i, /<embed/i
+  ];
+  return patrones.some(rx => rx.test(texto));
+}
+
+function sec_validarPrecio(precio) {
+  const n = Number(precio);
+  if (!isFinite(n)) return null;
+  if (n <= 0) return null;
+  if (n > 1000000) return null;
+  return Math.round(n * 100) / 100;
+}
+
+function sec_validarTitulo(titulo) {
+  const s = sec_sanitizarTexto(titulo, 200);
+  if (!s || s.length < 3) return null;
+  if (sec_contienePatronMalicioso(s)) return null;
+  return s;
+}
+
 // ═══ Persistencia IA en Supabase (alternativa a Git) ═══
 async function guardarIAConfigEnSupabase() {
   try {

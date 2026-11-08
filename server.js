@@ -116,6 +116,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/api/admin/ia-status')) return;
   if (req.url.startsWith('/api/admin/sync-ia-keys')) return;
   if (req.url.startsWith('/api/admin/force-save-full')) return;
+  if (req.url.startsWith('/api/admin/reload-tiendas')) return;
   if (req.url.startsWith('/api/admin/ia-force-save')) return;
   if (req.url.startsWith('/api/admin/ia-audit-global')) return;
   if (req.url.startsWith('/api/test-ai')) return;
@@ -4548,6 +4549,28 @@ function _resetMonthlyRefs() {
 // ═══════════════════════════════════════════════════════
 
 // Crear tienda (una por seller)
+app.post('/api/admin/reload-tiendas', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  if (String(payload.telefono) !== '5358980267') { reply.code(403); return { ok: false, error: 'Solo admin' }; }
+  try {
+    const cfgFull = await leerStateFullDeSupabase();
+    if (!cfgFull || !Array.isArray(cfgFull.tiendas)) {
+      return { ok: false, error: 'Storage vacío o sin tiendas' };
+    }
+    const antes = (state.tiendas || []).length;
+    state.tiendas = cfgFull.tiendas;
+    if (Array.isArray(cfgFull.notifications) && cfgFull.notifications.length > 0) {
+      state.notifications = cfgFull.notifications;
+    }
+    await save();
+    console.log('[RELOAD] Tiendas recargadas desde Storage: ' + antes + ' -> ' + state.tiendas.length);
+    return { ok: true, antes, ahora: state.tiendas.length, tiendas: state.tiendas.map(t => ({ nombre: t.nombre, slug: t.slug })) };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 app.post('/api/admin/force-save-full', async (req, reply) => {
   const payload = requireSeller(req);
   if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }

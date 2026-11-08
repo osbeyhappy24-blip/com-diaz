@@ -1003,23 +1003,30 @@ async function leerBackupLocales() {
 // ═══ Persistencia IA en Supabase (alternativa a Git) ═══
 async function guardarIAConfigEnSupabase() {
   try {
-    const payload = {
-      key: 'ia_config',
-      value: JSON.stringify({
-        iaKeys: state.iaKeys || [],
-        iaModel: state.iaModel || 'gemini-3.6-flash',
-        iaOptimizado: state.iaOptimizado || {},
-        updatedAt: Date.now()
-      })
-    };
-    // Intentar UPDATE primero
-    const existing = await dbSelectOne('state_kv', '?key=eq.ia_config');
-    if (existing) {
-      await dbUpdate('state_kv', existing.id, { value: payload.value });
-    } else {
-      await dbInsert('state_kv', payload);
+    const SB_URL = process.env.SUPABASE_URL;
+    const SB_KEY = process.env.SUPABASE_SECRET_KEY;
+    const body = JSON.stringify({
+      iaKeys: state.iaKeys || [],
+      iaModel: state.iaModel || 'gemini-3.6-flash',
+      iaOptimizado: state.iaOptimizado || {},
+      updatedAt: Date.now()
+    });
+    const r = await fetch(SB_URL + '/storage/v1/object/state/state_ia.json', {
+      method: 'POST',
+      headers: {
+        'apikey': SB_KEY,
+        'Authorization': 'Bearer ' + SB_KEY,
+        'Content-Type': 'application/json',
+        'x-upsert': 'true'
+      },
+      body: body
+    });
+    if (!r.ok) {
+      const err = await r.text().catch(() => '');
+      console.error('[SUPABASE-STATE] Upload falló HTTP ' + r.status + ': ' + err.slice(0, 200));
+      return false;
     }
-    console.log('[SUPABASE-STATE] IA config guardada (' + (state.iaKeys || []).length + ' keys)');
+    console.log('[SUPABASE-STATE] IA config guardada en Storage (' + (state.iaKeys || []).length + ' keys)');
     return true;
   } catch(e) {
     console.error('[SUPABASE-STATE] Error guardando:', e.message);
@@ -1029,10 +1036,21 @@ async function guardarIAConfigEnSupabase() {
 
 async function leerIAConfigDeSupabase() {
   try {
-    const row = await dbSelectOne('state_kv', '?key=eq.ia_config');
-    if (!row || !row.value) return null;
-    const cfg = JSON.parse(row.value);
-    console.log('[SUPABASE-STATE] IA config leída (' + ((cfg.iaKeys || []).length) + ' keys)');
+    const SB_URL = process.env.SUPABASE_URL;
+    const SB_KEY = process.env.SUPABASE_SECRET_KEY;
+    const r = await fetch(SB_URL + '/storage/v1/object/state/state_ia.json', {
+      headers: {
+        'apikey': SB_KEY,
+        'Authorization': 'Bearer ' + SB_KEY
+      }
+    });
+    if (!r.ok) {
+      if (r.status === 404) return null;
+      console.error('[SUPABASE-STATE] Download HTTP ' + r.status);
+      return null;
+    }
+    const cfg = await r.json();
+    console.log('[SUPABASE-STATE] IA config leída de Storage (' + ((cfg.iaKeys || []).length) + ' keys)');
     return cfg;
   } catch(e) {
     console.error('[SUPABASE-STATE] Error leyendo:', e.message);
@@ -5046,7 +5064,7 @@ app.post('/api/admin/ia-force-save', async (req, reply) => {
 
   const diag = { keys_recibidas: keys.length, model, pasos: {} };
 
-  // 2. Supabase directo (raw fetch, sin dbInsert)
+  // 2. Supabase Storage (upload state_ia.json)
   const SB_URL = process.env.SUPABASE_URL;
   const SB_KEY = process.env.SUPABASE_SECRET_KEY;
   const value = JSON.stringify({
@@ -5057,42 +5075,36 @@ app.post('/api/admin/ia-force-save', async (req, reply) => {
   });
 
   try {
-    const del = await fetch(SB_URL + '/rest/v1/state_kv?key=eq.ia_config', {
-      method: 'DELETE',
-      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
-    });
-    diag.pasos.sb_delete = del.status;
-
-    const ins = await fetch(SB_URL + '/rest/v1/state_kv', {
+    const ins = await fetch(SB_URL + '/storage/v1/object/state/state_ia.json', {
       method: 'POST',
       headers: {
         'apikey': SB_KEY,
         'Authorization': 'Bearer ' + SB_KEY,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'x-upsert': 'true'
       },
-      body: JSON.stringify({ key: 'ia_config', value: value })
+      body: value
     });
-    diag.pasos.sb_insert = ins.status;
-    if (!ins.ok) diag.pasos.sb_insert_body = (await ins.text()).slice(0, 200);
+    diag.pasos.storage_upload = ins.status;
+    if (!ins.ok) diag.pasos.storage_upload_body = (await ins.text()).slice(0, 200);
   } catch(e) {
-    diag.pasos.sb_error = e.message;
+    diag.pasos.storage_error = e.message;
   }
 
-  // 3. Read-back Supabase
+  // 3. Read-back Storage
   try {
-    const rb = await fetch(SB_URL + '/rest/v1/state_kv?key=eq.ia_config&select=value', {
+    const rb = await fetch(SB_URL + '/storage/v1/object/state/state_ia.json', {
       headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
     });
-    const rows = await rb.json();
-    if (Array.isArray(rows) && rows.length > 0) {
-      const parsed = JSON.parse(rows[0].value);
-      diag.pasos.sb_readback_keys = (parsed.iaKeys || []).length;
-      diag.pasos.sb_readback_model = parsed.iaModel;
+    if (rb.ok) {
+      const parsed = await rb.json();
+      diag.pasos.storage_readback_keys = (parsed.iaKeys || []).length;
+      diag.pasos.storage_readback_model = parsed.iaModel;
     } else {
-      diag.pasos.sb_readback = 'empty';
+      diag.pasos.storage_readback = 'HTTP ' + rb.status;
     }
   } catch(e) {
-    diag.pasos.sb_readback_error = e.message;
+    diag.pasos.storage_readback_error = e.message;
   }
 
   // 4. Git directo con guardarEstado (bypass save)

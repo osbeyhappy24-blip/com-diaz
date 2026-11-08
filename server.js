@@ -117,6 +117,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/api/app-version') && req.method === 'GET') return;
   if (req.url.startsWith('/api/admin/reset-ratelimit')) return;
   if (req.url.startsWith('/api/admin/ia-status')) return;
+  if (req.url.startsWith('/api/admin/ia-cron-status')) return;
   if (req.url.startsWith('/api/admin/sync-ia-keys')) return;
   if (req.url.startsWith('/api/admin/ia-force-save')) return;
   if (req.url.startsWith('/api/admin/ia-audit-global')) return;
@@ -888,6 +889,12 @@ async function cargarDesdeNube() {
             if (cfgSb.iaModel) state.iaModel = cfgSb.iaModel;
             if (cfgSb.iaOptimizado && typeof cfgSb.iaOptimizado === 'object') {
               state.iaOptimizado = cfgSb.iaOptimizado;
+            }
+            if (cfgSb.iaModerado && typeof cfgSb.iaModerado === 'object') {
+              state.iaModerado = cfgSb.iaModerado;
+            }
+            if (cfgSb.sellerStrikes && typeof cfgSb.sellerStrikes === 'object') {
+              state.sellerStrikes = cfgSb.sellerStrikes;
             }
           }
         } catch(e) {
@@ -3124,6 +3131,21 @@ app.get('/api/home', async () => {
 
 // POST: crear producto
 app.post('/api/seller/products', async (req, reply) => {
+    // ═══ RATE LIMIT: 10 POST/min por seller+IP ═══
+    try {
+      const _ip = (req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown');
+      const _sellerPayload = requireSeller(req);
+      if (_sellerPayload) {
+        const _key = 'postprod:' + _sellerPayload.sellerId + ':' + _ip;
+        const _now = Date.now();
+        const _rl = rateLimitMap.get(_key) || { count: 0, resetAt: _now + 60 * 1000 };
+        if (_now > _rl.resetAt) { _rl.count = 0; _rl.resetAt = _now + 60 * 1000; }
+        if (_rl.count >= 10) { reply.code(429); return { ok: false, error: 'Demasiadas subidas. Espera 1 min.' }; }
+        _rl.count++;
+        rateLimitMap.set(_key, _rl);
+      }
+    } catch(_rlErr) {}
+
   try {
     const payload = requireSeller(req);
     _invalidarLocalCache();
@@ -4887,6 +4909,7 @@ async function aplicarModeracion(sellerId, producto, modResult) {
     if (modResult.safe) {
       state.iaModerado[producto.id] = { safe: true, ts: Date.now() };
       await save();
+    try { await guardarIAConfigEnSupabase(); } catch(e) {}
       return;
     }
 
@@ -5159,6 +5182,24 @@ async function iniciarCronIA() {
 
 // Iniciar el cron al arrancar el servidor
 iniciarCronIA();
+
+app.get('/api/admin/ia-cron-status', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+  if (String(payload.telefono) !== '5358980267') { reply.code(403); return { ok: false, error: 'Solo admin' }; }
+  return {
+    ok: true,
+    estado: {
+      iaKeys: (state.iaKeys || []).length,
+      iaModel: state.iaModel || '(no set)',
+      iaOptimizado: Object.keys(state.iaOptimizado || {}).length,
+      iaModerado: Object.keys(state.iaModerado || {}).length,
+      sellerStrikes: Object.keys(state.sellerStrikes || {}).length,
+      iaJobs: Array.from(iaJobs.keys()),
+      cronActivo: !!cronIAInterval
+    }
+  };
+});
 
 app.get('/api/admin/ia-status', async (req, reply) => {
   const payload = requireSeller(req);

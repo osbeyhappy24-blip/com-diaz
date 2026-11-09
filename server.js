@@ -114,6 +114,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/api/app-version') && req.method === 'GET') return;
   if (req.url.startsWith('/api/admin/reset-ratelimit')) return;
   if (req.url.startsWith('/api/admin/ia-status')) return;
+  if (req.url.startsWith('/api/admin/ia-dashboard')) return;
   if (req.url.startsWith('/api/admin/sync-ia-keys')) return;
   if (req.url.startsWith('/api/admin/force-save-full')) return;
   if (req.url.startsWith('/api/admin/reload-tiendas')) return;
@@ -5110,6 +5111,7 @@ async function procesarMejoraIA(sellerId) {
   job.estado = 'completado';
   job.completadoEn = Date.now();
   console.log(`[IA-WORKER] Seller ${sellerId} completó ${job.procesados}/${job.total}`);
+  state.iaUltimaEjecucion = Date.now();
 }
 
 // Endpoint para iniciar
@@ -5224,6 +5226,108 @@ Responde SOLO el JSON, sin markdown.`;
 });
 
 // ADMIN: auditoría global de IA (todos los sellers)
+// ═══ DASHBOARD IA CONSOLIDADO ═══
+app.get('/api/admin/ia-dashboard', async (req, reply) => {
+  try {
+    // Validación admin (X-Comdiaz-Key)
+    const _key = String(req.headers['x-comdiaz-key'] || req.query?.k || '');
+    const _expected = String(process.env.COMDIAZ_KEY || 'ukafr7gb');
+    if (_key !== _expected) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+    // 1. Estado del cron
+    const ultimaEjecucion = state.iaUltimaEjecucion || null;
+    const cron = {
+      activo: !!cronIAInterval,
+      frecuencia_min: 5,
+      ultima_ejecucion_ts: ultimaEjecucion,
+      minutos_desde_ultima: ultimaEjecucion ? Math.floor((Date.now() - ultimaEjecucion) / 60000) : null
+    };
+
+    // 2. Keys
+    const keys = {
+      total: (state.iaKeys || []).length,
+      activas: (state.iaKeys || []).length,
+      modelo: state.iaModel || 'gemini-3.6-flash'
+    };
+
+    // 3. Productos (por seller)
+    const sellers = await dbSelect('sellers', '?estado=eq.aprobado&select=id,nombre,telefono,plan_id');
+    const vendedores = [];
+    let totalProductos = 0, totalConIA = 0, totalPendientes = 0;
+    const iaMod = state.iaModerado || {};
+    const strikes = state.sellerStrikes || {};
+
+    for (const s of sellers || []) {
+      const prods = await dbSelect('seller_products', '?seller_id=eq.' + encodeURIComponent(s.id) + '&publicado=eq.true&activo=eq.true&select=id,descripcion');
+      const pubs = prods || [];
+      const conDesc = pubs.filter(p => p.descripcion && p.descripcion.length > 20).length;
+      const sinDesc = pubs.length - conDesc;
+
+      // Contar bloqueados/moderados de este seller
+      const prodIds = new Set(pubs.map(p => p.id));
+      let bloqueados = 0, safe = 0;
+      for (const pid of prodIds) {
+        if (iaMod[pid]) {
+          if (iaMod[pid].safe === false) bloqueados++;
+          else safe++;
+        }
+      }
+
+      totalProductos += pubs.length;
+      totalConIA += conDesc;
+      totalPendientes += sinDesc;
+
+      vendedores.push({
+        seller_id: s.id,
+        nombre: s.nombre,
+        telefono: s.telefono,
+        plan: s.plan_id,
+        publicados: pubs.length,
+        con_ia: conDesc,
+        pendientes: sinDesc,
+        moderados_safe: safe,
+        bloqueados,
+        strikes: strikes[s.id] || 0
+      });
+    }
+
+    const productos = {
+      total: totalProductos,
+      con_ia: totalConIA,
+      pendientes: totalPendientes,
+      porcentaje: totalProductos > 0 ? Math.round((totalConIA / totalProductos) * 100) : 0
+    };
+
+    // 4. Moderación
+    const modVals = Object.values(iaMod);
+    const totalModerados = modVals.length;
+    const totalBloqueados = modVals.filter(v => v.safe === false).length;
+    const totalSafe = totalModerados - totalBloqueados;
+    const sellersConStrikes = Object.keys(strikes).length;
+    const sellersSuspensos = Object.entries(strikes).filter(([_, n]) => n >= 3).length;
+
+    const moderacion = {
+      revisadas: totalModerados,
+      safe: totalSafe,
+      bloqueadas: totalBloqueados,
+      sellers_con_strikes: sellersConStrikes,
+      sellers_suspensos: sellersSuspensos
+    };
+
+    return {
+      ok: true,
+      cron,
+      keys,
+      productos,
+      moderacion,
+      vendedores,
+      timestamp: Date.now()
+    };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 app.get('/api/admin/ia-audit-global', async (req, reply) => {
   const payload = requireSeller(req);
   if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }

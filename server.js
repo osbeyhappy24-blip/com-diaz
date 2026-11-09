@@ -849,6 +849,13 @@ async function cargarDesdeNube() {
       if (full.importConfig) state.importConfig = full.importConfig;
       if (full.appVersion) state.appVersion = full.appVersion;
       if (Array.isArray(full.productosManuales)) state.productosManuales = full.productosManuales;
+      // [FIX BUG1] Merge IA desde state-full.json
+      if (Array.isArray(full.iaKeys) && full.iaKeys.length > 0) state.iaKeys = full.iaKeys;
+      if (full.iaModel) state.iaModel = full.iaModel;
+      if (full.iaOptimizado && typeof full.iaOptimizado === 'object') state.iaOptimizado = full.iaOptimizado;
+      if (full.iaModerado && typeof full.iaModerado === 'object') state.iaModerado = full.iaModerado;
+      if (full.sellerStrikes && typeof full.sellerStrikes === 'object') state.sellerStrikes = full.sellerStrikes;
+      if (full.iaUltimaEjecucion) state.iaUltimaEjecucion = full.iaUltimaEjecucion;
       if (full.tesoreria && Array.isArray(full.tesoreria.movimientos)) {
         state.tesoreria = state.tesoreria || { movimientos: [] };
         state.tesoreria.movimientos = full.tesoreria.movimientos;
@@ -861,7 +868,8 @@ async function cargarDesdeNube() {
   }
 
   // ═══ FALLBACK: GitHub State (backup config pequeña) ═══
-  if (!isJSONBinConfigured()) return cargadoDeStorage;
+  // [FIX BUG1] Ya no se corta el flujo si JSONBin no está configurado
+  if (isJSONBinConfigured()) {
   try {
     const remoto = await leerEstado();
     if (remoto && typeof remoto === 'object' && Object.keys(remoto).length > 0) {
@@ -994,6 +1002,7 @@ async function cargarDesdeNube() {
   } catch(e) {
     app.log.error("Error cargando JSONBin: " + e.message);
   }
+  } // [FIX BUG1] cierre if isJSONBinConfigured
   return false;
 }
 
@@ -1070,9 +1079,16 @@ async function guardarStateFullEnSupabase() {
     }
     
     // 4. Subir merge
+    // [FIX BUG1] Incluir IA en state-full.json (spread condicional: no sobreescribe con vacío)
     const body = JSON.stringify({
       tiendas: mergedTiendas,
       notifications: mergedNotif,
+      ...((state.iaKeys && state.iaKeys.length > 0) ? { iaKeys: state.iaKeys } : {}),
+      ...(state.iaModel ? { iaModel: state.iaModel } : {}),
+      ...((state.iaOptimizado && Object.keys(state.iaOptimizado || {}).length > 0) ? { iaOptimizado: state.iaOptimizado } : {}),
+      ...((state.iaModerado && Object.keys(state.iaModerado || {}).length > 0) ? { iaModerado: state.iaModerado } : {}),
+      ...((state.sellerStrikes && Object.keys(state.sellerStrikes || {}).length > 0) ? { sellerStrikes: state.sellerStrikes } : {}),
+      ...(state.iaUltimaEjecucion ? { iaUltimaEjecucion: state.iaUltimaEjecucion } : {}),
       updatedAt: Date.now()
     });
     
@@ -10403,7 +10419,31 @@ async function autoSearchOnStart() {
   }
 }
 
-cargarDesdeNube().then(() => {
+cargarDesdeNube().then(async () => {
+  // ═══ [IA-BOOT] Hidratación IA garantizada (independiente de JSONBin/Storage) ═══
+  try {
+    if (!state.iaKeys || state.iaKeys.length === 0) {
+      const cfgIa = await leerIAConfigDeSupabase();
+      if (cfgIa) {
+        if (Array.isArray(cfgIa.iaKeys) && cfgIa.iaKeys.length > 0) {
+          state.iaKeys = cfgIa.iaKeys;
+          console.log('[IA-BOOT] ✅ iaKeys hidratadas: ' + cfgIa.iaKeys.length);
+        }
+        if (cfgIa.iaModel) state.iaModel = cfgIa.iaModel;
+        if (cfgIa.iaOptimizado && typeof cfgIa.iaOptimizado === 'object') state.iaOptimizado = cfgIa.iaOptimizado;
+        if (cfgIa.iaModerado && typeof cfgIa.iaModerado === 'object') state.iaModerado = cfgIa.iaModerado;
+        if (cfgIa.sellerStrikes && typeof cfgIa.sellerStrikes === 'object') state.sellerStrikes = cfgIa.sellerStrikes;
+        if (cfgIa.iaUltimaEjecucion) state.iaUltimaEjecucion = cfgIa.iaUltimaEjecucion;
+        console.log('[IA-BOOT] moderación: ' + Object.keys(state.iaModerado || {}).length + ' prods, strikes: ' + Object.keys(state.sellerStrikes || {}).length + ' sellers');
+      } else {
+        console.warn('[IA-BOOT] state_ia.json vacío o inexistente en Storage');
+      }
+    } else {
+      console.log('[IA-BOOT] iaKeys ya en memoria: ' + state.iaKeys.length);
+    }
+  } catch(e) {
+    console.error('[IA-BOOT] Error hidratando IA: ' + e.message);
+  }
   app.listen({ port: PORT, host: '0.0.0.0' }, () => {
   console.log(BRAND);
   console.log(`Comdiaz backend en http://localhost:${PORT}`);

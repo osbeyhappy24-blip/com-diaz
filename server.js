@@ -115,6 +115,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url.startsWith('/api/admin/reset-ratelimit')) return;
   if (req.url.startsWith('/api/admin/ia-status')) return;
   if (req.url.startsWith('/api/admin/ia-dashboard')) return;
+  if (req.url.startsWith('/api/admin/ia-run-now')) return;
   if (req.url.startsWith('/api/admin/sync-ia-keys')) return;
   if (req.url.startsWith('/api/admin/force-save-full')) return;
   if (req.url.startsWith('/api/admin/reload-tiendas')) return;
@@ -5340,6 +5341,69 @@ app.get('/api/admin/ia-dashboard', async (req, reply) => {
       timestamp: Date.now()
     };
   } catch(e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+// ═══ FORZAR EJECUCIÓN IA AHORA ═══
+app.post('/api/admin/ia-run-now', async (req, reply) => {
+  try {
+    const _key = String(req.headers['x-comdiaz-key'] || req.query?.k || '');
+    const _expected = String(process.env.COMDIAZ_KEY || 'ukafr7gb');
+    if (_key !== _expected) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+    if (!state.iaKeys || state.iaKeys.length === 0) {
+      return { ok: false, error: 'No hay keys IA configuradas' };
+    }
+
+    console.log('[IA-CRON] Ejecución MANUAL solicitada por admin');
+    
+    const sellers = await dbSelect('sellers', '?estado=eq.aprobado&select=id,telefono');
+    let totalProcesados = 0;
+    const detalles = [];
+
+    for (const s of sellers || []) {
+      const existing = iaJobs.get(s.id);
+      if (existing && (existing.estado === 'procesando' || existing.estado === 'en_cola')) {
+        console.log('[IA-RUN-NOW] Skip seller ' + s.id + ' (job activo)');
+        continue;
+      }
+
+      const prods = await dbSelect('seller_products', '?seller_id=eq.' + s.id + '&publicado=eq.true&activo=eq.true&select=id,titulo,descripcion,imagenes,categoria,updated_at&order=created_at.asc');
+      if (!state.iaModerado) state.iaModerado = {};
+      
+      // Moderar primero
+      const sinModerar = (prods || []).filter(p => p.imagenes && p.imagenes[0] && !state.iaModerado[p.id]);
+      for (const p of sinModerar.slice(0, 3)) {
+        const mod = await moderarImagen(p.imagenes[0], p.titulo);
+        await aplicarModeracion(s.id, p, mod);
+        await new Promise(r => setTimeout(r, 1500));
+      }
+
+      // Procesar pendientes
+      const bloqueados = Object.keys(state.iaModerado || {}).filter(id => state.iaModerado[id].safe === false);
+      const pendientes = (prods || []).filter(p => !bloqueados.includes(p.id) && (!p.descripcion || p.descripcion.length < 20));
+
+      if (pendientes.length > 0) {
+        console.log('[IA-RUN-NOW] ' + pendientes.length + ' pendientes para seller ' + s.id);
+        const job = {
+          sellerId: s.id,
+          estado: 'en_cola',
+          total: pendientes.length,
+          procesados: 0,
+          productos: pendientes,
+          creadoEn: Date.now()
+        };
+        iaJobs.set(s.id, job);
+        await procesarMejoraIA(s.id);
+        totalProcesados += pendientes.length;
+        detalles.push({ seller: s.id, procesados: pendientes.length });
+      }
+    }
+
+    return { ok: true, total_procesados: totalProcesados, detalles, mensaje: 'Ejecución manual completada' };
+  } catch(e) {
+    console.error('[IA-RUN-NOW] Error:', e.message);
     return { ok: false, error: e.message };
   }
 });

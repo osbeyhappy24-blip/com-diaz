@@ -2694,14 +2694,14 @@ function scheduleDaily() {
   if (cronCleanup) cronCleanup.stop();
   if (cronPurga) cronPurga.stop();
   const tz = APP_TZ;
-  cronWeekly = cron.schedule('0 5 * * 0', async function() {
-    app.log.info('[CRON-SEM] Disparado');
-    try { await runSearchWeekly(); } catch (e) { app.log.error('[CRON-SEM] ' + e.message); }
-  }, { timezone: tz });
-  cronDaily = cron.schedule('0 5 * * 1-6', async function() {
-    app.log.info('[CRON-DIA] Disparado');
-    try { await runSearchDaily(); } catch (e) { app.log.error('[CRON-DIA] ' + e.message); }
-  }, { timezone: tz });
+//   cronWeekly = cron.schedule('0 5 * * 0', async function() {
+//     app.log.info('[CRON-SEM] Disparado');
+//     try { await runSearchWeekly(); } catch (e) { app.log.error('[CRON-SEM] ' + e.message); }
+//   }, { timezone: tz });
+//   cronDaily = cron.schedule('0 5 * * 1-6', async function() {
+//     app.log.info('[CRON-DIA] Disparado');
+//     try { await runSearchDaily(); } catch (e) { app.log.error('[CRON-DIA] ' + e.message); }
+//   }, { timezone: tz });
   cronCleanup = cron.schedule('0 3 * * *', async function() {
     try { await cleanupProductos(); } catch (e) { app.log.error('[CLEANUP] ' + e.message); }
   }, { timezone: tz });
@@ -2715,19 +2715,19 @@ function scheduleDaily() {
   }, { timezone: tz });
   
   // ═══ CRON MENSUAL: Ofertas + productos nuevos (1er domingo del mes a las 06:00) ═══
-  if (cronMensual) cronMensual.stop();
-  cronMensual = cron.schedule('0 6 1-7 * 0', async function() {
-    app.log.info('[CRON-MES] Ejecutando búsqueda mensual de ofertas');
-    try {
-      await runSearchMonthly();
-    } catch (e) {
+//   if (cronMensual) cronMensual.stop();
+//   cronMensual = cron.schedule('0 6 1-7 * 0', async function() {
+//     app.log.info('[CRON-MES] Ejecutando búsqueda mensual de ofertas');
+//     try {
+//       await runSearchMonthly();
+//     } catch (e) {
       app.log.error('[CRON-MES] ' + e.message);
-    }
-  }, { timezone: tz });
+//     }
+//   }, { timezone: tz });
 
   // ═══ CRON-LOCAL-DESC: cada 2h genera descripciones de locales (pool BULK) ═══
   if (cronLocalDesc) cronLocalDesc.stop();
-  cronLocalDesc = cron.schedule('0 */2 * * *', async function() {
+  cronLocalDesc = cron.schedule('0 */6 * * *', async function() {
     try { await procesarDescripcionesLocales(100); } catch (e) { app.log.error('[CRON-LOCAL-DESC] ' + e.message); }
   }, { timezone: tz });
 

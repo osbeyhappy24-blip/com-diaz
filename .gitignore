@@ -1,28 +1,26 @@
-*.antes-*
+# Backups y scripts ad-hoc
+server.js.bak*
 *.bak
 *.bak-*
-*.json.bak
-.apify-token
-.env
-.vapid-keys.txt
-backup-*.json
-data.json
-data.json.bak
-node_modules/
-server.js.antes-*
-state-*.json
-update_render.py
+fix_*.py
+fix_*.js
+add_*.py
+audit_*.py
+audit_*.js
+*.log
 
-# State local (se guarda en GitHub, no en el repo)
-state.json
-state.json.gz
+# Secretos y config local
+.env
+.env.*
+.vapid-keys.txt
+bin_id.txt
+
+# Datos locales
 data.json
 data.json.bak*
 
-# Logs de auditoría
-auditoria-*.log
+# Node
+node_modules/
 
-# Archivos temporales de test
-test-*.sh
-test-*.jpg
-bin_id.txt
+# Temp
+*.tmp

@@ -4240,6 +4240,97 @@ app.get('/api/seller/plan-info', async (req, reply) => {
 
 
 // ═══ ADMIN: forzar expiración (SOLO TEST) ═══
+// ═══ CAMBIAR PLAN (admin) ═══
+app.post('/api/admin/sellers/:id/change-plan', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+  try {
+    const { plan_id, dias } = req.body || {};
+    if (!plan_id) { reply.code(400); return { ok: false, error: 'plan_id requerido' }; }
+
+    const planesValidos = ['basico', 'pro', 'premium'];
+    if (!planesValidos.includes(plan_id)) {
+      reply.code(400); return { ok: false, error: 'plan_id inválido. Debe ser: ' + planesValidos.join(', ') };
+    }
+
+    const plan = await dbSelectOne('plans', '?id=eq.' + encodeURIComponent(plan_id));
+    if (!plan) { reply.code(404); return { ok: false, error: 'Plan no existe en BD' }; }
+
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(req.params.id));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Seller no existe' }; }
+
+    // Calcular nueva fecha de expiración
+    let nuevaFecha = null;
+    if (plan_id === 'basico') {
+      // Básico es gratis → sin fecha de expiración
+      nuevaFecha = null;
+    } else {
+      // Pro/Premium → extiende desde hoy o desde expiración futura
+      const diasExtender = Number(dias) > 0 ? Number(dias) : 30;
+      const ahora = Date.now();
+      const expiraActual = seller.plan_expira_at ? new Date(seller.plan_expira_at).getTime() : 0;
+      const base = expiraActual > ahora ? expiraActual : ahora;
+      nuevaFecha = new Date(base + diasExtender * 24 * 3600 * 1000).toISOString();
+    }
+
+    const updates = {
+      plan_id,
+      plan_expira_at: nuevaFecha,
+      estado: 'aprobado',
+      activo: true,
+      updated_at: new Date().toISOString(),
+      notas_internas: null
+    };
+
+    const updated = await dbUpdate('sellers', req.params.id, updates);
+    if (!updated) { reply.code(500); return { ok: false, error: 'No se pudo actualizar' }; }
+
+    // Notificación in-app al seller
+    try {
+      const msgExpiracion = nuevaFecha
+        ? ' hasta ' + new Date(nuevaFecha).toLocaleDateString('es')
+        : ' (sin fecha de vencimiento)';
+      crearNotificacion({
+        user_type: 'seller',
+        user_id: req.params.id,
+        tipo: 'plan_cambiado',
+        titulo: '✅ Tu plan cambió a ' + plan.nombre,
+        mensaje: 'Tu plan ' + plan.nombre + ' está activo' + msgExpiracion + '.',
+        accion_url: 'seller-panel.html'
+      });
+    } catch(_) {}
+
+    // Notificación Telegram al admin
+    try {
+      const msgExpiracion = nuevaFecha
+        ? new Date(nuevaFecha).toLocaleDateString('es')
+        : '∞ (gratis)';
+      notifyTelegram(
+        '🔄 <b>PLAN CAMBIADO</b>\n\n' +
+        '👤 ' + seller.nombre + '\n' +
+        '📱 ' + seller.telefono + '\n' +
+        '💼 Nuevo plan: ' + plan.nombre + '\n' +
+        '📅 Hasta: ' + msgExpiracion
+      ).catch(() => {});
+    } catch(_) {}
+
+    return {
+      ok: true,
+      seller: {
+        id: updated.id,
+        plan_id: updated.plan_id,
+        plan_expira_at: updated.plan_expira_at,
+        estado: updated.estado
+      }
+    };
+  } catch(e) {
+    app.log.error('[CHANGE-PLAN] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 app.post('/api/admin/sellers/:id/force-expiry', async (req, reply) => {
   const auth = requireAdmin(req);
   if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }

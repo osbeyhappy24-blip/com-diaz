@@ -4159,7 +4159,7 @@ app.post('/api/admin/sellers/:id/renew', async (req, reply) => {
       user_id: req.params.id,
       tipo: 'plan_renovado',
       titulo: '✅ Plan renovado',
-      mensaje: 'Tu plan ' + plan.nombre + ' está activo hasta ' + nuevaFecha.toLocaleDateString('es') + '. ¡Gracias por confiar en Comdiaz!',
+      mensaje: 'Tu plan ' + plan.nombre + ' está activo hasta ' + nuevaFecha.toLocaleDateString('es') + '. ¡Gracias por confiar en ProfitToLife!',
       accion_url: 'seller-panel.html'
     });
 
@@ -4601,7 +4601,7 @@ app.post('/api/admin/payments/:id/approve', async (req, reply) => {
       user_id: seller.id,
       tipo: 'pago_aprobado',
       titulo: '✅ Pago confirmado',
-      mensaje: 'Tu plan ' + plan.nombre + ' está activo hasta ' + nuevaFecha.toLocaleDateString('es') + '. ¡Gracias por confiar en Comdiaz!',
+      mensaje: 'Tu plan ' + plan.nombre + ' está activo hasta ' + nuevaFecha.toLocaleDateString('es') + '. ¡Gracias por confiar en ProfitToLife!',
       accion_url: 'seller-panel.html'
     });
 

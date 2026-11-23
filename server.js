@@ -4120,6 +4120,19 @@ app.get('/api/admin/notifications', async (req, reply) => {
 
 
 // ═══ ADMIN: renovar plan de un seller (extiende 30 días) ═══
+
+// ═══ NOTIFICAR AL ADMIN CUANDO EL VENDEDOR PIDE RENOVAR ═══
+app.post('/api/seller/request-renewal', async (req, reply) => {
+  try {
+    const { nombre, telefono, tienda, plan, dias } = req.body || {};
+    const msg = '💳 <b>SOLICITUD DE RENOVACIÓN</b>\n\n👤 ' + (nombre || '?') + '\n📱 ' + (telefono || '?') + '\n🏪 ' + (tienda || '?') + '\n💼 ' + (plan || '?') + '\n⏳ ' + (dias || '?') + ' días restantes.';
+    await notifyTelegram(msg);
+    return { ok: true };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 app.post('/api/admin/sellers/:id/renew', async (req, reply) => {
   const auth = requireAdmin(req);
   if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }

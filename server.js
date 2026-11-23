@@ -4349,6 +4349,52 @@ app.post('/api/admin/sellers/:id/force-expiry', async (req, reply) => {
 });
 
 
+// ═══ ADMIN: resetear contraseña de un seller ═══
+app.post('/api/admin/sellers/:id/reset-password', async (req, reply) => {
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+  try {
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(req.params.id));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Seller no existe' }; }
+
+    let password = (req.body && req.body.password) ? String(req.body.password).trim() : '';
+    if (password && password.length < 6) {
+      reply.code(400); return { ok: false, error: 'La contrasena debe tener al menos 6 caracteres' };
+    }
+    if (!password) {
+      const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789abcdefghjkmnpqrstuvwxyz';
+      const buf = crypto.randomBytes(10);
+      password = '';
+      for (let i = 0; i < 10; i++) password += charset[buf[i] % charset.length];
+    }
+
+    const password_hash = hashPassword(password);
+    const updated = await dbUpdate('sellers', seller.id, {
+      password_hash,
+      updated_at: new Date().toISOString()
+    });
+
+    try {
+      notifyTelegram(
+        'PASSWORD RESETEADA\n\n' +
+        'Seller: ' + seller.nombre + '\n' +
+        'Tel: ' + seller.telefono
+      ).catch(() => {});
+    } catch(_) {}
+
+    return {
+      ok: true,
+      password,
+      seller: { id: updated.id, nombre: updated.nombre, telefono: updated.telefono }
+    };
+  } catch(e) {
+    app.log.error('[RESET-PASSWORD] ' + e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+
 // ═══ ADMIN: resetear rate limit + failMap (útil para tests) ═══
 app.post('/api/admin/reset-ratelimit', async (req, reply) => {
   // Este endpoint NO pasa por el gate (exento abajo) para poder resetearlo incluso desde la IP bloqueada

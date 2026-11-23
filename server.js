@@ -2721,7 +2721,7 @@ function scheduleDaily() {
 //     try {
 //       await runSearchMonthly();
 //     } catch (e) {
-      app.log.error('[CRON-MES] ' + e.message);
+//       app.log.error('[CRON-MES] ' + e.message);
 //     }
 //   }, { timezone: tz });
 
@@ -4349,6 +4349,50 @@ app.post('/api/admin/sellers/:id/force-expiry', async (req, reply) => {
 });
 
 
+// ═══ ADMIN: resetear contraseña de un seller ═══
+console.log('[RESET-PWD] Cargando endpoint reset-password...');
+app.post('/api/admin/sellers/:id/reset-password', async (req, reply) => {
+  console.log('[RESET-PWD] Request recibido para ID:', req.params.id);
+  const auth = requireAdmin(req);
+  if (!auth) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
+
+  try {
+    const seller = await dbSelectOne('sellers', '?id=eq.' + encodeURIComponent(req.params.id));
+    if (!seller) { reply.code(404); return { ok: false, error: 'Seller no existe' }; }
+
+    let password = (req.body && req.body.password) ? String(req.body.password).trim() : '';
+    if (password && password.length < 6) {
+      reply.code(400); return { ok: false, error: 'La contrasena debe tener al menos 6 caracteres' };
+    }
+    if (!password) {
+      // Generación simple, SIN crypto, para máxima compatibilidad
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      password = '';
+      for (let i = 0; i < 8; i++) {
+        password += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+    }
+
+    const password_hash = hashPassword(password);
+    const updated = await dbUpdate('sellers', seller.id, {
+      password_hash,
+      updated_at: new Date().toISOString()
+    });
+
+    console.log('[RESET-PWD] Password actualizada para:', seller.nombre);
+
+    return {
+      ok: true,
+      password,
+      seller: { id: updated.id, nombre: updated.nombre, telefono: updated.telefono }
+    };
+  } catch(e) {
+    console.error('[RESET-PWD] ERROR:', e.message);
+    reply.code(500);
+    return { ok: false, error: e.message };
+  }
+});
+console.log('[RESET-PWD] Endpoint registrado correctamente.');
 // ═══ ADMIN: resetear rate limit + failMap (útil para tests) ═══
 app.post('/api/admin/reset-ratelimit', async (req, reply) => {
   // Este endpoint NO pasa por el gate (exento abajo) para poder resetearlo incluso desde la IP bloqueada

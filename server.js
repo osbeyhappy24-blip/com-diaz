@@ -3974,7 +3974,7 @@ app.post('/api/seller/notifications/:id/read', async (req, reply) => {
     });
     if (!notif) { reply.code(404); return { ok: false, error: 'No encontrada' }; }
     notif.leida = true;
-    save().catch(function(){});
+    await save();
     return { ok: true };
   } catch(e) {
     reply.code(500);
@@ -3993,7 +3993,7 @@ app.post('/api/seller/notifications/read-all', async (req, reply) => {
         n++;
       }
     });
-    if (n > 0) save().catch(function(){});
+    if (n > 0) await save();
     return { ok: true, actualizadas: n };
   } catch(e) {
     reply.code(500);

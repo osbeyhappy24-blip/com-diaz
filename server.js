@@ -8801,6 +8801,86 @@ app.get('/api/public/live-search', async (req, reply) => {
 // ═══════════════════════════════════════════════
 // SUBIDA DE IMÁGENES (ImgBB)
 // ═══════════════════════════════════════════════
+
+// ═══ SISTEMA DE REFERIDOS ANTI-FRAUDE ═══
+const visitasRecientes = new Map();
+
+app.post('/api/seller/referidos/campaign', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) return reply.code(401).send({ ok: false, error: 'No autorizado' });
+  const tienda = (state.tiendas || []).find(t => t.seller_id === payload.sellerId);
+  if (!tienda) return reply.code(404).send({ ok: false, error: 'Tienda no encontrada' });
+
+  if (!state.campanas_referidos) state.campanas_referidos = {};
+  const campana = state.campanas_referidos[tienda.id] || { activa: false, limite: 100, usuarios: [] };
+  
+  if (req.body.activa !== undefined) campana.activa = !!req.body.activa;
+  if (req.body.limite !== undefined) campana.limite = parseInt(req.body.limite) || 100;
+  
+  state.campanas_referidos[tienda.id] = campana;
+  await save();
+  return { ok: true, campana };
+});
+
+app.get('/api/seller/referidos/list', async (req, reply) => {
+  const payload = requireSeller(req);
+  if (!payload) return reply.code(401).send({ ok: false, error: 'No autorizado' });
+  const tienda = (state.tiendas || []).find(t => t.seller_id === payload.sellerId);
+  if (!tienda) return reply.code(404).send({ ok: false, error: 'Tienda no encontrada' });
+  const campana = (state.campanas_referidos || {})[tienda.id] || { activa: false, limite: 100, usuarios: [] };
+  return { ok: true, campana };
+});
+
+app.get('/api/public/referidos/:slug', async (req, reply) => {
+  const slug = String(req.params.slug || '').toLowerCase();
+  const tienda = (state.tiendas || []).find(t => t.slug === slug && t.activa !== false);
+  if (!tienda) return reply.code(404).send({ ok: false });
+  const campana = (state.campanas_referidos || {})[tienda.id] || { activa: false };
+  return { ok: true, activa: campana.activa, tienda_id: tienda.id };
+});
+
+app.post('/api/public/referidos/join', async (req, reply) => {
+  const { slug, nombre, telefono } = req.body || {};
+  if (!slug || !nombre || !telefono) return reply.code(400).send({ ok: false, error: 'Faltan datos' });
+  const tienda = (state.tiendas || []).find(t => t.slug === slug);
+  if (!tienda) return reply.code(404).send({ ok: false, error: 'Tienda no encontrada' });
+
+  if (!state.campanas_referidos) state.campanas_referidos = {};
+  if (!state.campanas_referidos[tienda.id]) state.campanas_referidos[tienda.id] = { activa: false, usuarios: [] };
+  
+  const refId = 'REF-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+  state.campanas_referidos[tienda.id].usuarios.push({ id: refId, nombre, telefono, visitas: 0 });
+  await save();
+  return { ok: true, ref_id: refId };
+});
+
+app.post('/api/public/referidos/track', async (req, reply) => {
+  const { slug, ref_id } = req.body || {};
+  if (!slug || !ref_id) return reply.code(400).send({ ok: false });
+  const tienda = (state.tiendas || []).find(t => t.slug === slug);
+  if (!tienda) return reply.code(404).send({ ok: false });
+
+  const ip = req.headers['x-forwarded-for'] || req.ip || 'unknown';
+  const ahora = Date.now();
+  
+  if (visitasRecientes.has(ip)) {
+    const lastVisit = visitasRecientes.get(ip);
+    if (ahora - lastVisit < 24 * 60 * 60 * 1000) return { ok: true, counted: false, reason: 'IP ya registrada hoy' };
+  }
+  visitasRecientes.set(ip, ahora);
+
+  const campana = (state.campanas_referidos || {})[tienda.id];
+  if (campana && campana.usuarios) {
+    const user = campana.usuarios.find(u => u.id === ref_id);
+    if (user) {
+      user.visitas++;
+      await save();
+      return { ok: true, counted: true, visitas: user.visitas };
+    }
+  }
+  return { ok: true, counted: false, reason: 'Referido no encontrado' };
+});
+
 app.post('/api/upload-image', async (req, reply) => {
   try {
     const payload = requireSeller(req);

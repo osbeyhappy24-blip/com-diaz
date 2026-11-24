@@ -4913,7 +4913,7 @@ app.put('/api/seller/mi-tienda', async (req, reply) => {
   if (nNombre && nNombre.length >= 3) tienda.nombre = nNombre;
   if (body.descripcion !== undefined) tienda.descripcion = sanitizarTexto(body.descripcion, 500);
   if (body.logo !== undefined && body.logo !== null) { if (body.logo.trim() !== '') tienda.logo = sanitizarTexto(body.logo, 500000); }
-  if (body.banner !== undefined) tienda.banner = sanitizarTexto(body.banner, 500);
+  if (body.banner !== undefined && body.banner !== null) { if (body.banner.trim() !== '') tienda.banner = sanitizarTexto(body.banner, 500); }
   if (body.color && /^#[0-9a-f]{6}$/i.test(body.color)) tienda.color = body.color;
   if (body.whatsapp !== undefined) tienda.whatsapp = String(body.whatsapp).replace(/[^0-9]/g, '').substring(0, 20);
   if (body.activa !== undefined) tienda.activa = !!body.activa;

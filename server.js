@@ -296,6 +296,7 @@ const DEFAULTS = {
   importConfig: {},      // 🔧 Configuración de importación
   appVersion: null,      // 📌 Versión
   referrals: {},         // 🎁 Sistema de referidos
+  campanas_referidos: {}, // 🎁 Campañas Comparte y Gana (persistencia)
   sellerSubscriptions: {}, // 📊 Subs por seller
   notifications: [],     // 🔔 Notificaciones in-app
   aiUsageCounters: {},   // 🤖 Contadores IA
@@ -839,6 +840,7 @@ async function cargarDesdeNube() {
       if (Array.isArray(full.tiendas)) state.tiendas = full.tiendas;
       if (full.visits) state.visits = full.visits;
       if (full.referrals) state.referrals = full.referrals;
+      if (full.campanas_referidos && typeof full.campanas_referidos === 'object') state.campanas_referidos = full.campanas_referidos;
       if (full.sellerSubscriptions) state.sellerSubscriptions = full.sellerSubscriptions;
       if (Array.isArray(full.notifications)) state.notifications = full.notifications;
       if (full.aiUsageCounters) state.aiUsageCounters = full.aiUsageCounters;
@@ -947,6 +949,7 @@ async function cargarDesdeNube() {
       if (remoto.visits) state.visits = remoto.visits;
       // ═══ FIX: cargar campos críticos que antes se perdían ═══
       if (remoto.referrals) state.referrals = remoto.referrals;
+      if (remoto.campanas_referidos && typeof remoto.campanas_referidos === 'object') state.campanas_referidos = remoto.campanas_referidos;
 
       if (remoto.sellerSubscriptions) state.sellerSubscriptions = remoto.sellerSubscriptions;
       if (remoto.notifications) state.notifications = remoto.notifications;
@@ -1333,6 +1336,7 @@ async function guardarEnNube() {
       // 🆕 Campos que se cargaban pero NUNCA se guardaban (bug de persistencia)
       visits: state.visits || { total: 0, history: [], byDay: {}, byProduct: {} },
       referrals: state.referrals || {},
+      campanas_referidos: state.campanas_referidos || {},
       sellerSubscriptions: state.sellerSubscriptions || {},
       notifications: (state.notifications || []).slice(-500),  // cap 500 (LRU)
       aiUsageCounters: state.aiUsageCounters || {},
@@ -1351,6 +1355,7 @@ async function guardarEnNube() {
       },
       // ═══ FIX: persistir campos críticos que antes se perdían ═══
       referrals: state.referrals || {},
+      campanas_referidos: state.campanas_referidos || {},
 
       sellerSubscriptions: (state.sellerSubscriptions || []).slice(-500),
       notifications: (state.notifications || []).slice(-500),
@@ -1375,6 +1380,7 @@ async function guardarEnNube() {
         tiendas: state.tiendas || [],
         visits: state.visits || {},
         referrals: state.referrals || {},
+        campanas_referidos: state.campanas_referidos || {},
         sellerSubscriptions: state.sellerSubscriptions || {},
         notifications: (state.notifications || []).slice(-500),
         aiUsageCounters: state.aiUsageCounters || {},

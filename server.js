@@ -8822,6 +8822,8 @@ app.post('/api/seller/referidos/campaign', async (req, reply) => {
   
   if (req.body.activa !== undefined) campana.activa = !!req.body.activa;
   if (req.body.limite !== undefined) campana.limite = parseInt(req.body.limite) || 100;
+  if (req.body.mensaje !== undefined) campana.mensaje = req.body.mensaje;
+  if (req.body.imagen !== undefined) campana.imagen = req.body.imagen;
   
   state.campanas_referidos[tienda.id] = campana;
   await save();
@@ -8842,7 +8844,7 @@ app.get('/api/public/referidos/:slug', async (req, reply) => {
   const tienda = (state.tiendas || []).find(t => t.slug === slug && t.activa !== false);
   if (!tienda) return reply.code(404).send({ ok: false });
   const campana = (state.campanas_referidos || {})[tienda.id] || { activa: false };
-  return { ok: true, activa: campana.activa, tienda_id: tienda.id };
+  return { ok: true, activa: campana.activa, tienda_id: tienda.id, mensaje: campana.mensaje, imagen: campana.imagen, nombre: tienda.nombre };
 });
 
 app.post('/api/public/referidos/join', async (req, reply) => {

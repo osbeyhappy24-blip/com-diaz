@@ -910,7 +910,7 @@ async function cargarDesdeNube() {
       if (remoto.automation) state.automation = { ...state.automation, ...remoto.automation };
       if (remoto.sources) state.sources = remoto.sources;
       // [FIX] NO sobreescribir published - mantener el local con IDs reales de eBay
-      if (remoto.tiendas) state.tiendas = remoto.tiendas;
+      if (!cargadoDeStorage && remoto.tiendas) state.tiendas = remoto.tiendas;
 
       // Hidratar tiendas desde Storage (MERGE: añadir las que falten)
       try {
@@ -946,13 +946,13 @@ async function cargarDesdeNube() {
         state.results = mergeProducts(state.results || [], remoto.results);
         app.log.info('Merge ' + remoto.results.length + ' desde JSONBin -> total ' + state.results.length);
       }
-      if (remoto.visits) state.visits = remoto.visits;
+      if (!cargadoDeStorage && remoto.visits) state.visits = remoto.visits;
       // ═══ FIX: cargar campos críticos que antes se perdían ═══
-      if (remoto.referrals) state.referrals = remoto.referrals;
-      if (remoto.campanas_referidos && typeof remoto.campanas_referidos === 'object') state.campanas_referidos = remoto.campanas_referidos;
+      if (!cargadoDeStorage && remoto.referrals) state.referrals = remoto.referrals;
+      if (!cargadoDeStorage && remoto.campanas_referidos && typeof remoto.campanas_referidos === 'object') state.campanas_referidos = remoto.campanas_referidos;
 
-      if (remoto.sellerSubscriptions) state.sellerSubscriptions = remoto.sellerSubscriptions;
-      if (remoto.notifications) state.notifications = remoto.notifications;
+      if (!cargadoDeStorage && remoto.sellerSubscriptions) state.sellerSubscriptions = remoto.sellerSubscriptions;
+      if (!cargadoDeStorage && remoto.notifications) state.notifications = remoto.notifications;
       if (remoto.aiUsageCounters) state.aiUsageCounters = remoto.aiUsageCounters;
       if (remoto.shopStats) state.shopStats = remoto.shopStats;
       if (remoto.deletedHistory) state.deletedHistory = remoto.deletedHistory;

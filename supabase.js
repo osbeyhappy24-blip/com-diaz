@@ -117,7 +117,7 @@ export function isSupabaseConfigured() {
 
 const STORAGE_BUCKET = 'comdiaz-state';
 
-export async function storageGet(path) {
+async function storageGetOld(path) {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
   try {
     const res = await fetch(SUPABASE_URL + '/storage/v1/object/' + STORAGE_BUCKET + '/' + path, {
@@ -138,7 +138,7 @@ export async function storageGet(path) {
   }
 }
 
-export async function storagePut(path, data) {
+async function storagePutOld(path, data) {
   if (!SUPABASE_URL || !SUPABASE_KEY) return { ok: false, error: 'Sin config' };
   try {
     const res = await fetch(SUPABASE_URL + '/storage/v1/object/' + STORAGE_BUCKET + '/' + path, {
@@ -176,6 +176,68 @@ export async function storageDelete(path) {
     });
     return { ok: res.ok };
   } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+
+// PARCHE PERSISTENCIA: lectura con reintentos + bloqueo anti-sobrescritura
+let storageLoadFailed = false;
+export function storageLoadHasFailed() { return storageLoadFailed; }
+
+export async function storageGet(path) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return null;
+  for (let i = 1; i <= 4; i++) {
+    try {
+      const res = await fetch(SUPABASE_URL + '/storage/v1/object/' + STORAGE_BUCKET + '/' + path, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY },
+        signal: AbortSignal.timeout(20000)
+      });
+      if (res.status === 404) return null;
+      if (res.ok) {
+        const data = await res.json();
+        if (path === 'state-full.json') storageLoadFailed = false;
+        return data;
+      }
+      const txt = await res.text().catch(() => '');
+      if (/not.?found/i.test(txt)) return null;
+      console.error('[STORAGE-GET] intento ' + i + ' HTTP ' + res.status + ': ' + txt.slice(0, 200));
+    } catch (e) {
+      console.error('[STORAGE-GET] intento ' + i + ': ' + e.message);
+    }
+    if (i < 4) await new Promise(r => setTimeout(r, 1500 * i));
+  }
+  if (path === 'state-full.json') storageLoadFailed = true;
+  return null;
+}
+
+export async function storagePut(path, data) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return { ok: false, error: 'Sin config' };
+  if (path === 'state-full.json' && storageLoadFailed) {
+    console.error('[STORAGE-PUT] BLOQUEADO: la lectura de Supabase fallo, no se sobrescribe el estado');
+    return { ok: false, error: 'lectura previa fallida' };
+  }
+  try {
+    const body = JSON.stringify(data);
+    const res = await fetch(SUPABASE_URL + '/storage/v1/object/' + STORAGE_BUCKET + '/' + path, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json',
+        'x-upsert': 'true'
+      },
+      body: body,
+      signal: AbortSignal.timeout(30000)
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      console.error('[STORAGE-PUT] HTTP ' + res.status + ': ' + txt.slice(0, 200));
+      return { ok: false, error: 'HTTP ' + res.status };
+    }
+    return { ok: true, size: body.length };
+  } catch (e) {
+    console.error('[STORAGE-PUT] ' + e.message);
     return { ok: false, error: e.message };
   }
 }

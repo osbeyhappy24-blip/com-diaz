@@ -4879,6 +4879,20 @@ app.post('/api/seller/crear-tienda', async (req, reply) => {
 });
 
 // Ver mi tienda (si existe)
+
+app.get('/api/admin/sync-state', async (req, reply) => {
+  try {
+    const full = await storageGet('state-full.json');
+    if (full) {
+      state.tiendas = full.tiendas || state.tiendas;
+      state.campanas_referidos = full.campanas_referidos || state.campanas_referidos;
+      state.notifications = full.notifications || state.notifications;
+      return { ok: true, message: 'Memoria de Render sincronizada con Supabase' };
+    }
+    return { ok: false, error: 'No se encontró estado' };
+  } catch(e) { return { ok: false, error: e.message }; }
+});
+
 app.get('/api/seller/mi-tienda', async (req, reply) => {
   const payload = requireSeller(req);
   if (!payload) { reply.code(401); return { ok: false, error: 'No autorizado' }; }
